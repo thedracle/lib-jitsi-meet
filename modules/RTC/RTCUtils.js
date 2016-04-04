@@ -76,6 +76,7 @@ function getConstraints(um, options) {
         }
 
         constraints.video.optional.push({ googLeakyBucket: true });
+	constraints.video.mandatory.push({ googNoiseReduction: true});
 
         setResolutionConstraints(constraints, options.resolution);
     }
