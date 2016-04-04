@@ -64,7 +64,7 @@ function getConstraints(um, options) {
 
     if (um.indexOf('video') >= 0) {
         // same behaviour as true
-        constraints.video = { mandatory: {}, optional: [] };
+        constraints.video = { mandatory: {googNoiseReduction: true}, optional: [] };
 
         if (options.cameraDeviceId) {
             // new style of settings device id (FF only)
