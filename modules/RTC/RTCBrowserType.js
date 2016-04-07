@@ -152,10 +152,10 @@ function detectIE() {
 
 function detectNWJS (){
     var userAgent = navigator.userAgent;
-    if (userAgent.match(/JitsiMeetNW/) || userAgent.match(/ClickBranch/)) {
+    if (userAgent.match(/(JitsiMeetNW|ClickBranchVideo)/)) {
         currentBrowser = RTCBrowserType.RTC_BROWSER_NWJS;
-        var version = userAgent.match(/JitsiMeetNW\/([\d.]+)/)[1];
-        console.info("This appears to be JitsiMeetNW, ver: " + version);
+        var version = userAgent.match(/(JitsiMeetNW|ClickBranchVideo)\/([\d.]+)/)[2];
+        console.info("This appears to be NWJS, ver: " + version);
         return version;
     }
     return null;
