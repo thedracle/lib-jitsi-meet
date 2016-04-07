@@ -38,6 +38,7 @@ keyMap[RTCBrowserType.RTC_BROWSER_CHROME] = {
     "audioInputLevel": "audioInputLevel",
     "audioOutputLevel": "audioOutputLevel"
 };
+keyMap[RTCBrowserType.RTC_BROWSER_NWJS] = keyMap[RTCBrowserType.RTC_BROWSER_CHROME];
 keyMap[RTCBrowserType.RTC_BROWSER_OPERA] =
     keyMap[RTCBrowserType.RTC_BROWSER_CHROME];
 keyMap[RTCBrowserType.RTC_BROWSER_IEXPLORER] =
