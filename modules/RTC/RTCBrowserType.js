@@ -152,7 +152,7 @@ function detectIE() {
 
 function detectNWJS (){
     var userAgent = navigator.userAgent;
-    if (userAgent.match(/JitsiMeetNW/)) {
+    if (userAgent.match(/JitsiMeetNW/) || userAgent.match(/ClickBranch/)) {
         currentBrowser = RTCBrowserType.RTC_BROWSER_NWJS;
         var version = userAgent.match(/JitsiMeetNW\/([\d.]+)/)[1];
         console.info("This appears to be JitsiMeetNW, ver: " + version);
