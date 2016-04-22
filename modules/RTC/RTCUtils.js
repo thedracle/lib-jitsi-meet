@@ -797,7 +797,8 @@ var RTCUtils = {
      * false if not.
      */
     isDeviceChangeAvailable: function () {
-        return RTCBrowserType.isChrome() ||
+        return RTCBrowserType.isNWJS() || 
+	    RTCBrowserType.isChrome() ||
             RTCBrowserType.isFirefox() ||
             RTCBrowserType.isOpera() ||
             RTCBrowserType.isTemasysPluginUsed();
