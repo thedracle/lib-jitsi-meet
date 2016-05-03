@@ -54,7 +54,7 @@ function XMPP(options) {
     $(window).on('beforeunload unload', function() {
 	// Ignore this unload event.
 	if(!self.ignoreUnload) {
-		self.disconnect.bind(this)();
+		self.disconnect.bind(self)();
 	}
 	self.ignoreUnload = false;
     });
