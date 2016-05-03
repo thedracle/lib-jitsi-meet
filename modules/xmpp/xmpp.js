@@ -49,7 +49,13 @@ function XMPP(options) {
     // they wanted to utilize the connected connection in an unload handler of
     // their own. However, it should be fairly easy for them to do that by
     // registering their unload handler before us.
-    $(window).on('beforeunload unload', this.disconnect.bind(this));
+    $(window).on('beforeunload unload', () => {
+	// Ignore this unload event.
+	if(!XMPP.ignoreUnload) {
+		this.disconnect.bind(this)();
+	}
+	XMPP.ignoreUnload = false;
+    });
 }
 
 XMPP.prototype.getConnection = function () { return this.connection; };
