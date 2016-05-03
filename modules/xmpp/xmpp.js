@@ -51,10 +51,10 @@ function XMPP(options) {
     // registering their unload handler before us.
     $(window).on('beforeunload unload', () => {
 	// Ignore this unload event.
-	if(!XMPP.ignoreUnload) {
+	if(!this.ignoreUnload) {
 		this.disconnect.bind(this)();
 	}
-	XMPP.ignoreUnload = false;
+	this.ignoreUnload = false;
     });
 }
 
