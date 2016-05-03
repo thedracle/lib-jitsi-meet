@@ -44,17 +44,19 @@ function XMPP(options) {
 
     this.connection = createConnection(options.bosh);
 
+    var self = this;
+
     // Setup a disconnect on unload as a way to facilitate API consumers. It
     // sounds like they would want that. A problem for them though may be if
     // they wanted to utilize the connected connection in an unload handler of
     // their own. However, it should be fairly easy for them to do that by
     // registering their unload handler before us.
-    $(window).on('beforeunload unload', () => {
+    $(window).on('beforeunload unload', function() {
 	// Ignore this unload event.
-	if(!this.ignoreUnload) {
-		this.disconnect.bind(this)();
+	if(!self.ignoreUnload) {
+		self.disconnect.bind(this)();
 	}
-	this.ignoreUnload = false;
+	self.ignoreUnload = false;
     });
 }
 
