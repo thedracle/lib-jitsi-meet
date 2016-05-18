@@ -11,7 +11,6 @@ module.exports = function(XMPP, eventEmitter) {
     Strophe.addConnectionPlugin('jingle', {
         connection: null,
         sessions: {},
-        jid2session: {},
         ice_config: {iceServers: []},
         media_constraints: {
             mandatory: {
@@ -22,30 +21,37 @@ module.exports = function(XMPP, eventEmitter) {
         },
         init: function (conn) {
             this.connection = conn;
-            if (this.connection.disco) {
+            var disco = conn.disco;
+            if (disco) {
                 // http://xmpp.org/extensions/xep-0167.html#support
                 // http://xmpp.org/extensions/xep-0176.html#support
-                this.connection.disco.addFeature('urn:xmpp:jingle:1');
-                this.connection.disco.addFeature('urn:xmpp:jingle:apps:rtp:1');
-                this.connection.disco.addFeature('urn:xmpp:jingle:transports:ice-udp:1');
-                this.connection.disco.addFeature('urn:xmpp:jingle:apps:dtls:0');
-                this.connection.disco.addFeature('urn:xmpp:jingle:transports:dtls-sctp:1');
-                this.connection.disco.addFeature('urn:xmpp:jingle:apps:rtp:audio');
-                this.connection.disco.addFeature('urn:xmpp:jingle:apps:rtp:video');
+                disco.addFeature('urn:xmpp:jingle:1');
+                disco.addFeature('urn:xmpp:jingle:apps:rtp:1');
+                disco.addFeature('urn:xmpp:jingle:transports:ice-udp:1');
+                disco.addFeature('urn:xmpp:jingle:apps:dtls:0');
+                disco.addFeature('urn:xmpp:jingle:transports:dtls-sctp:1');
+                disco.addFeature('urn:xmpp:jingle:apps:rtp:audio');
+                disco.addFeature('urn:xmpp:jingle:apps:rtp:video');
+
+                // Lipsync
+                if (RTCBrowserType.isChrome()) {
+                    this.connection.disco.addFeature(
+                        'http://jitsi.org/meet/lipsync');
+                }
 
                 if (RTCBrowserType.isChrome() || RTCBrowserType.isOpera()
                     || RTCBrowserType.isTemasysPluginUsed()) {
-                    this.connection.disco.addFeature('urn:ietf:rfc:4588');
+                    disco.addFeature('urn:ietf:rfc:4588');
                 }
 
                 // this is dealt with by SDP O/A so we don't need to announce this
-                //this.connection.disco.addFeature('urn:xmpp:jingle:apps:rtp:rtcp-fb:0'); // XEP-0293
-                //this.connection.disco.addFeature('urn:xmpp:jingle:apps:rtp:rtp-hdrext:0'); // XEP-0294
+                //disco.addFeature('urn:xmpp:jingle:apps:rtp:rtcp-fb:0'); // XEP-0293
+                //disco.addFeature('urn:xmpp:jingle:apps:rtp:rtp-hdrext:0'); // XEP-0294
 
-                this.connection.disco.addFeature('urn:ietf:rfc:5761'); // rtcp-mux
-                this.connection.disco.addFeature('urn:ietf:rfc:5888'); // a=group, e.g. bundle
+                disco.addFeature('urn:ietf:rfc:5761'); // rtcp-mux
+                disco.addFeature('urn:ietf:rfc:5888'); // a=group, e.g. bundle
 
-                //this.connection.disco.addFeature('urn:ietf:rfc:5576'); // a=ssrc
+                //disco.addFeature('urn:ietf:rfc:5576'); // a=ssrc
             }
             this.connection.addHandler(this.onJingle.bind(this), 'urn:xmpp:jingle:1', 'iq', 'set', null, null);
         },
@@ -94,8 +100,8 @@ module.exports = function(XMPP, eventEmitter) {
             // see http://xmpp.org/extensions/xep-0166.html#concepts-session
             switch (action) {
                 case 'session-initiate':
-                    console.log("(TIME) received session-initiate:\t",
-                                window.performance.now());
+                    var now = window.performance.now();
+                    logger.log("(TIME) received session-initiate:\t", now);
                     var startMuted = $(iq).find('jingle>startmuted');
                     if (startMuted && startMuted.length > 0) {
                         var audioMuted = startMuted.attr("audio");
@@ -111,12 +117,11 @@ module.exports = function(XMPP, eventEmitter) {
                             this.ice_config, XMPP);
 
                     this.sessions[sess.sid] = sess;
-                    this.jid2session[sess.peerjid] = sess;
 
                     var jingleOffer = $(iq).find('>jingle');
                     // FIXME there's no nice way with event to get the reason
                     // why the call was rejected
-                    eventEmitter.emit(XMPPEvents.CALL_INCOMING, sess, jingleOffer);
+                    eventEmitter.emit(XMPPEvents.CALL_INCOMING, sess, jingleOffer, now);
                     if (!sess.active())
                     {
                         // Call not accepted
@@ -138,6 +143,20 @@ module.exports = function(XMPP, eventEmitter) {
                         reasonText = $(iq).find('>jingle>reason>text').text();
                     }
                     this.terminate(sess.sid, reasonCondition, reasonText);
+                    break;
+                case 'transport-replace':
+                    logger.info("(TIME) Start transport replace",
+                                window.performance.now());
+                    sess.replaceTransport($(iq).find('>jingle'),
+                        function () {
+                            logger.info(
+                                "(TIME) Transport replace success!",
+                                window.performance.now());
+                        },
+                        function(error) {
+                            logger.error('Transport replace failed', error);
+                            sess.sendTransportReject();
+                        });
                     break;
                 case 'addsource': // FIXME: proprietary, un-jingleish
                 case 'source-add': // FIXME: proprietary
@@ -164,7 +183,6 @@ module.exports = function(XMPP, eventEmitter) {
                 if (this.sessions[sid].state != 'ended') {
                     this.sessions[sid].onTerminated(reasonCondition, reasonText);
                 }
-                delete this.jid2session[this.sessions[sid].peerjid];
                 delete this.sessions[sid];
             }
         },
@@ -253,4 +271,3 @@ module.exports = function(XMPP, eventEmitter) {
         }
     });
 };
-

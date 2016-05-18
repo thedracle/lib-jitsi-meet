@@ -85,7 +85,8 @@ var JitsiConferenceEvents = {
      */
     CONFERENCE_ERROR: "conference.error",
     /**
-     * Indicates that conference has been joined.
+     * Indicates that conference has been joined. The event does NOT provide any
+     * parameters to its listeners.
      */
     CONFERENCE_JOINED: "conference.joined",
     /**
@@ -111,7 +112,7 @@ var JitsiConferenceEvents = {
     /**
      * Indicates that recording state changed.
      */
-    RECORDING_STATE_CHANGED: "conference.recordingStateChanged",
+    RECORDER_STATE_CHANGED: "conference.recorderStateChanged",
     /**
      * Indicates that phone number changed.
      */

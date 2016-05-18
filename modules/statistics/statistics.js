@@ -112,12 +112,6 @@ Statistics.prototype.dispose = function () {
         if(eventEmitter)
             eventEmitter.removeAllListeners();
     }
-
-    if(this.callstats)
-    {
-        this.callstats.sendTerminateEvent();
-        this.callstats = null;
-    }
 };
 
 
@@ -182,11 +176,12 @@ Statistics.prototype.isCallstatsEnabled = function () {
 };
 
 /**
- * Notifies CallStats for connection setup errors
+ * Notifies CallStats for ice connection failed
+ * @param {RTCPeerConnection} pc connection on which failure occured.
  */
-Statistics.prototype.sendSetupFailedEvent = function () {
+Statistics.prototype.sendIceConnectionFailedEvent = function (pc) {
     if(this.callStatsIntegrationEnabled && this.callstats)
-        this.callstats.sendSetupFailedEvent();
+        this.callstats.sendIceConnectionFailedEvent(pc, this.callstats);
 };
 
 /**
@@ -197,6 +192,25 @@ Statistics.prototype.sendSetupFailedEvent = function () {
 Statistics.prototype.sendMuteEvent = function (muted, type) {
     if(this.callStatsIntegrationEnabled)
         CallStats.sendMuteEvent(muted, type, this.callstats);
+};
+
+/**
+ * Notifies CallStats for screen sharing events
+ * @param start {boolean} true for starting screen sharing and
+ * false for not stopping
+ */
+Statistics.prototype.sendScreenSharingEvent = function (start) {
+    if(this.callStatsIntegrationEnabled)
+        CallStats.sendScreenSharingEvent(start, this.callstats);
+};
+
+/**
+ * Notifies the statistics module that we are now the dominant speaker of the
+ * conference.
+ */
+Statistics.prototype.sendDominantSpeakerEvent = function () {
+    if(this.callStatsIntegrationEnabled)
+        CallStats.sendDominantSpeakerEvent(this.callstats);
 };
 
 /**
@@ -290,6 +304,26 @@ Statistics.prototype.sendSetRemoteDescFailed = function (e, pc) {
 Statistics.prototype.sendAddIceCandidateFailed = function (e, pc) {
     if(this.callStatsIntegrationEnabled)
         CallStats.sendAddIceCandidateFailed(e, pc, this.callstats);
+};
+
+/**
+ * Notifies CallStats that there is an unhandled error on the page.
+ *
+ * @param {Error} e error to send
+ * @param {RTCPeerConnection} pc connection on which failure occured.
+ */
+Statistics.prototype.sendUnhandledError = function (e) {
+    if(this.callStatsIntegrationEnabled)
+        CallStats.sendUnhandledError(e, this.callstats);
+};
+
+/**
+ * Notifies CallStats that there is unhandled exception.
+ *
+ * @param {Error} e error to send
+ */
+Statistics.sendUnhandledError = function (e) {
+    CallStats.sendUnhandledError(e, null);
 };
 
 /**

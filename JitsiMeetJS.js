@@ -1,12 +1,15 @@
 var logger = require("jitsi-meet-logger").getLogger(__filename);
 var JitsiConnection = require("./JitsiConnection");
+var JitsiMediaDevices = require("./JitsiMediaDevices");
 var JitsiConferenceEvents = require("./JitsiConferenceEvents");
 var JitsiConnectionEvents = require("./JitsiConnectionEvents");
+var JitsiMediaDevicesEvents = require('./JitsiMediaDevicesEvents');
 var JitsiConnectionErrors = require("./JitsiConnectionErrors");
 var JitsiConferenceErrors = require("./JitsiConferenceErrors");
 var JitsiTrackEvents = require("./JitsiTrackEvents");
 var JitsiTrackErrors = require("./JitsiTrackErrors");
 var Logger = require("jitsi-meet-logger");
+var MediaType = require("./service/RTC/MediaType");
 var RTC = require("./modules/RTC/RTC");
 var RTCUIHelper = require("./modules/RTC/RTCUIHelper");
 var Statistics = require("./modules/statistics/statistics");
@@ -36,11 +39,11 @@ var LibJitsiMeet = {
 
     version: '{#COMMIT_HASH#}',
 
-    JitsiConnection: JitsiConnection,
     events: {
         conference: JitsiConferenceEvents,
         connection: JitsiConnectionEvents,
-        track: JitsiTrackEvents
+        track: JitsiTrackEvents,
+        mediaDevices: JitsiMediaDevicesEvents
     },
     errors: {
         conference: JitsiConferenceErrors,
@@ -48,12 +51,38 @@ var LibJitsiMeet = {
         track: JitsiTrackErrors
     },
     logLevels: Logger.levels,
+    mediaDevices: JitsiMediaDevices,
     /**
      * Array of functions that will receive the GUM error.
      */
     _gumFailedHandler: [],
     init: function (options) {
-        Statistics.audioLevelsEnabled = !options.disableAudioLevels || true;
+        Statistics.audioLevelsEnabled = !options.disableAudioLevels;
+
+        if (options.enableWindowOnErrorHandler) {
+            // if an old handler exists also fire its events
+            var oldOnErrorHandler = window.onerror;
+            window.onerror = function (message, source, lineno, colno, error) {
+
+                this.getGlobalOnErrorHandler(
+                    message, source, lineno, colno, error);
+
+                if (oldOnErrorHandler)
+                    oldOnErrorHandler(message, source, lineno, colno, error);
+            }.bind(this);
+
+            // if an old handler exists also fire its events
+            var oldOnUnhandledRejection = window.onunhandledrejection;
+            window.onunhandledrejection = function(event) {
+
+                this.getGlobalOnErrorHandler(
+                    null, null, null, null, event.reason);
+
+                if(oldOnUnhandledRejection)
+                    oldOnUnhandledRejection(event);
+            }.bind(this);
+        }
+
         return RTC.init(options || {});
     },
     /**
@@ -88,7 +117,7 @@ var LibJitsiMeet = {
                     for(var i = 0; i < tracks.length; i++) {
                         var track = tracks[i];
                         var mStream = track.getOriginalStream();
-                        if(track.getType() === "audio"){
+                        if(track.getType() === MediaType.AUDIO){
                             Statistics.startLocalStats(mStream,
                                 track.setAudioLevel.bind(track));
                             track.addEventListener(
@@ -121,20 +150,61 @@ var LibJitsiMeet = {
     /**
      * Checks if its possible to enumerate available cameras/micropones.
      * @returns {boolean} true if available, false otherwise.
+     * @deprecated use JitsiMeetJS.mediaDevices.isDeviceListAvailable instead
      */
     isDeviceListAvailable: function () {
-        return RTC.isDeviceListAvailable();
+        logger.warn('This method is deprecated, use ' +
+            'JitsiMeetJS.mediaDevices.isDeviceListAvailable instead');
+        return this.mediaDevices.isDeviceListAvailable();
     },
     /**
-     * Returns true if changing the camera / microphone device is supported and
-     * false if not.
+     * Returns true if changing the input (camera / microphone) or output
+     * (audio) device is supported and false if not.
+     * @params {string} [deviceType] - type of device to change. Default is
+     *      undefined or 'input', 'output' - for audio output device change.
      * @returns {boolean} true if available, false otherwise.
+     * @deprecated use JitsiMeetJS.mediaDevices.isDeviceChangeAvailable instead
      */
-    isDeviceChangeAvailable: function () {
-        return RTC.isDeviceChangeAvailable();
+    isDeviceChangeAvailable: function (deviceType) {
+        logger.warn('This method is deprecated, use ' +
+            'JitsiMeetJS.mediaDevices.isDeviceChangeAvailable instead');
+        return this.mediaDevices.isDeviceChangeAvailable(deviceType);
     },
+    /**
+     * Executes callback with list of media devices connected.
+     * @param {function} callback
+     * @deprecated use JitsiMeetJS.mediaDevices.enumerateDevices instead
+     */
     enumerateDevices: function (callback) {
-        RTC.enumerateDevices(callback);
+        logger.warn('This method is deprecated, use ' +
+            'JitsiMeetJS.mediaDevices.enumerateDevices instead');
+        this.mediaDevices.enumerateDevices(callback);
+    },
+    /**
+     * Array of functions that will receive the unhandled errors.
+     */
+    _globalOnErrorHandler: [],
+    /**
+     * @returns function that can be used to be attached to window.onerror and
+     * if options.enableWindowOnErrorHandler is enabled returns
+     * the function used by the lib.
+     * (function(message, source, lineno, colno, error)).
+     */
+    getGlobalOnErrorHandler: function (message, source, lineno, colno, error) {
+        console.error(
+            'UnhandledError: ' + message,
+            'Script: ' + source,
+            'Line: ' + lineno,
+            'Column: ' + colno,
+            'StackTrace: ', error);
+        var globalOnErrorHandler = this._globalOnErrorHandler;
+        if (globalOnErrorHandler.length) {
+          globalOnErrorHandler.forEach(function (handler) {
+              handler(error);
+          });
+        } else {
+            Statistics.sendUnhandledError(error);
+        }
     },
 
     /**
@@ -146,6 +216,15 @@ var LibJitsiMeet = {
         RTCUIHelper: RTCUIHelper
     }
 };
+
+// XXX JitsiConnection or the instances it initializes and is associated with
+// (e.g. JitsiConference) may need a reference to LibJitsiMeet (aka
+// JitsiMeetJS). An approach could be to declare LibJitsiMeet global (which is
+// what we do in Jitsi Meet) but that could be seen as not such a cool decision
+// certainly looks even worse within the lib-jitsi-meet library itself. That's
+// why the decision is to provide LibJitsiMeet as a parameter of
+// JitsiConnection.
+LibJitsiMeet.JitsiConnection = JitsiConnection.bind(null, LibJitsiMeet);
 
 //Setups the promise object.
 window.Promise = window.Promise || require("es6-promise").Promise;

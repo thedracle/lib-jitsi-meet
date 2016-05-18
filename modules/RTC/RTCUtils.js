@@ -14,13 +14,53 @@ var SDPUtil = require("../xmpp/SDPUtil");
 var EventEmitter = require("events");
 var screenObtainer = require("./ScreenObtainer");
 var JitsiTrackErrors = require("../../JitsiTrackErrors");
+var MediaType = require("../../service/RTC/MediaType");
+var VideoType = require("../../service/RTC/VideoType");
 
 var eventEmitter = new EventEmitter();
 
+var AVAILABLE_DEVICES_POLL_INTERVAL_TIME = 3000; // ms
+
 var devices = {
-    audio: true,
-    video: true
+    audio: false,
+    video: false
 };
+
+// Currently audio output device change is supported only in Chrome and
+// default output always has 'default' device ID
+var audioOutputDeviceId = 'default'; // default device
+
+var featureDetectionAudioEl = document.createElement('audio');
+var isAudioOutputDeviceChangeAvailable =
+    typeof featureDetectionAudioEl.setSinkId !== 'undefined';
+
+var currentlyAvailableMediaDevices = [];
+
+var rawEnumerateDevicesWithCallback = navigator.mediaDevices
+    && navigator.mediaDevices.enumerateDevices
+        ? function(callback) {
+            navigator.mediaDevices.enumerateDevices().then(callback, function () {
+                callback([]);
+            });
+        }
+        : (MediaStreamTrack && MediaStreamTrack.getSources)
+            ? function (callback) {
+                MediaStreamTrack.getSources(function (sources) {
+                    callback(sources.map(convertMediaStreamTrackSource));
+                });
+            }
+            : undefined;
+
+// TODO: currently no browser supports 'devicechange' event even in nightly
+// builds so no feature/browser detection is used at all. However in future this
+// should be changed to some expression. Progress on 'devicechange' event
+// implementation for Chrome/Opera/NWJS can be tracked at
+// https://bugs.chromium.org/p/chromium/issues/detail?id=388648, for Firefox -
+// at https://bugzilla.mozilla.org/show_bug.cgi?id=1152383. More information on
+// 'devicechange' event can be found in spec -
+// http://w3c.github.io/mediacapture-main/#event-mediadevices-devicechange
+// TODO: check MS Edge
+var isDeviceChangeEventSupported = false;
 
 var rtcReady = false;
 
@@ -167,14 +207,21 @@ function getConstraints(um, options) {
         }
         constraints.video.optional.push({bandwidth: options.bandwidth});
     }
-    if (options.fps) {
+
+    if(options.minFps || options.maxFps || options.fps) {
         // for some cameras it might be necessary to request 30fps
         // so they choose 30fps mjpg over 10fps yuy2
         if (!constraints.video) {
             // same behaviour as true;
             constraints.video = {mandatory: {}, optional: []};
         }
-        constraints.video.mandatory.minFrameRate = options.fps;
+        if(options.minFps || options.fps) {
+            options.minFps = options.minFps || options.fps; //Fall back to options.fps for backwards compatibility
+            constraints.video.mandatory.minFrameRate = options.minFps;
+        }
+        if(options.maxFps) {
+            constraints.video.mandatory.maxFrameRate = options.maxFps;
+        }
     }
 
     // we turn audio for both audio and video tracks, the fake audio & video seems to work
@@ -202,6 +249,89 @@ function setAvailableDevices(um, available) {
     eventEmitter.emit(RTCEvents.AVAILABLE_DEVICES_CHANGED, devices);
 }
 
+/**
+ * Checks if new list of available media devices differs from previous one.
+ * @param {MediaDeviceInfo[]} newDevices - list of new devices.
+ * @returns {boolean} - true if list is different, false otherwise.
+ */
+function compareAvailableMediaDevices(newDevices) {
+    if (newDevices.length !== currentlyAvailableMediaDevices.length) {
+        return true;
+    }
+
+    return newDevices.map(mediaDeviceInfoToJSON).sort().join('') !==
+        currentlyAvailableMediaDevices.map(mediaDeviceInfoToJSON).sort().join('');
+
+    function mediaDeviceInfoToJSON(info) {
+        return JSON.stringify({
+            kind: info.kind,
+            deviceId: info.deviceId,
+            groupId: info.groupId,
+            label: info.label,
+            facing: info.facing
+        });
+    }
+}
+
+/**
+ * Periodically polls enumerateDevices() method to check if list of media
+ * devices has changed. This is temporary workaround until 'devicechange' event
+ * will be supported by browsers.
+ */
+function pollForAvailableMediaDevices() {
+    // Here we use plain navigator.mediaDevices.enumerateDevices instead of
+    // wrapped because we just need to know the fact the devices changed, labels
+    // do not matter. This fixes situation when we have no devices initially,
+    // and then plug in a new one.
+    if (rawEnumerateDevicesWithCallback) {
+        rawEnumerateDevicesWithCallback(function (devices) {
+            if (compareAvailableMediaDevices(devices)) {
+                onMediaDevicesListChanged(devices);
+            }
+
+            window.setTimeout(pollForAvailableMediaDevices,
+                AVAILABLE_DEVICES_POLL_INTERVAL_TIME);
+        });
+    }
+}
+
+/**
+ * Event handler for the 'devicechange' event.
+ * @param {MediaDeviceInfo[]} devices - list of media devices.
+ * @emits RTCEvents.DEVICE_LIST_CHANGED
+ */
+function onMediaDevicesListChanged(devices) {
+    currentlyAvailableMediaDevices = devices.slice(0);
+    logger.info('list of media devices has changed:', currentlyAvailableMediaDevices);
+
+    var videoInputDevices = currentlyAvailableMediaDevices.filter(function (d) {
+            return d.kind === 'videoinput';
+        }),
+        audioInputDevices = currentlyAvailableMediaDevices.filter(function (d) {
+            return d.kind === 'audioinput';
+        }),
+        videoInputDevicesWithEmptyLabels = videoInputDevices.filter(
+            function (d) {
+                return d.label === '';
+            }),
+        audioInputDevicesWithEmptyLabels = audioInputDevices.filter(
+            function (d) {
+                return d.label === '';
+            });
+
+    if (videoInputDevices.length &&
+        videoInputDevices.length === videoInputDevicesWithEmptyLabels.length) {
+        setAvailableDevices(['video'], false);
+    }
+
+    if (audioInputDevices.length &&
+        audioInputDevices.length === audioInputDevicesWithEmptyLabels.length) {
+        setAvailableDevices(['audio'], false);
+    }
+
+    eventEmitter.emit(RTCEvents.DEVICE_LIST_CHANGED, devices);
+}
+
 // In case of IE we continue from 'onReady' callback
 // passed to RTCUtils constructor. It will be invoked by Temasys plugin
 // once it is initialized.
@@ -209,6 +339,14 @@ function onReady (options, GUM) {
     rtcReady = true;
     eventEmitter.emit(RTCEvents.RTC_READY, true);
     screenObtainer.init(options, GUM);
+
+    if (isDeviceChangeEventSupported && RTCUtils.isDeviceListAvailable()) {
+        navigator.mediaDevices.addEventListener('devicechange', function () {
+            RTCUtils.enumerateDevices(onMediaDevicesListChanged);
+        });
+    } else if (RTCUtils.isDeviceListAvailable()) {
+        pollForAvailableMediaDevices();
+    }
 }
 
 /**
@@ -252,22 +390,6 @@ function wrapGetUserMedia(getUserMedia) {
 }
 
 /**
- * Create stub device which equals to auto selected device.
- * @param {string} kind if that should be `audio` or `video` device
- * @returns {Object} stub device description in `enumerateDevices` format
- */
-function createAutoDeviceInfo(kind) {
-    return {
-        facing: null,
-        label: 'Auto',
-        kind: kind,
-        deviceId: '',
-        groupId: ''
-    };
-}
-
-
-/**
  * Execute function after getUserMedia was executed at least once.
  * @param {Function} callback function to execute after getUserMedia
  */
@@ -290,20 +412,10 @@ function wrapEnumerateDevices(enumerateDevices) {
         // enumerate devices only after initial getUserMedia
         afterUserMediaInitialized(function () {
 
-            enumerateDevices().then(function (devices) {
-                //add auto devices
-                devices.unshift(
-                    createAutoDeviceInfo('audioinput'),
-                    createAutoDeviceInfo('videoinput')
-                );
-
-                callback(devices);
-            }, function (err) {
+            enumerateDevices().then(callback, function (err) {
                 console.error('cannot enumerate devices: ', err);
 
-                // return only auto devices
-                callback([createAutoDeviceInfo('audioinput'),
-                          createAutoDeviceInfo('videoinput')]);
+                callback([]);
             });
         });
     };
@@ -316,24 +428,29 @@ function wrapEnumerateDevices(enumerateDevices) {
  */
 function enumerateDevicesThroughMediaStreamTrack (callback) {
     MediaStreamTrack.getSources(function (sources) {
-        var devices = sources.map(function (source) {
-            var kind = (source.kind || '').toLowerCase();
-            return {
-                facing: source.facing || null,
-                label: source.label,
-                kind: kind ? kind + 'input': null,
-                deviceId: source.id,
-                groupId: source.groupId || null
-            };
-        });
-
-        //add auto devices
-        devices.unshift(
-            createAutoDeviceInfo('audioinput'),
-            createAutoDeviceInfo('videoinput')
-        );
-        callback(devices);
+        callback(sources.map(convertMediaStreamTrackSource));
     });
+}
+
+/**
+ * Converts MediaStreamTrack Source to enumerateDevices format.
+ * @param {Object} source
+ */
+function convertMediaStreamTrackSource(source) {
+    var kind = (source.kind || '').toLowerCase();
+
+    return {
+        facing: source.facing || null,
+        label: source.label,
+        // theoretically deprecated MediaStreamTrack.getSources should
+        // not return 'audiooutput' devices but let's handle it in any
+        // case
+        kind: kind
+            ? (kind === 'audiooutput' ? kind : kind + 'input')
+            : null,
+        deviceId: source.id,
+        groupId: source.groupId || null
+    };
 }
 
 function obtainDevices(options) {
@@ -374,7 +491,7 @@ function handleLocalStream(streams, resolution) {
         var audioVideo = streams.audioVideo;
         if (audioVideo) {
             var audioTracks = audioVideo.getAudioTracks();
-            if(audioTracks.length) {
+            if (audioTracks.length) {
                 audioStream = new webkitMediaStream();
                 for (var i = 0; i < audioTracks.length; i++) {
                     audioStream.addTrack(audioTracks[i]);
@@ -382,7 +499,7 @@ function handleLocalStream(streams, resolution) {
             }
 
             var videoTracks = audioVideo.getVideoTracks();
-            if(videoTracks.length) {
+            if (videoTracks.length) {
                 videoStream = new webkitMediaStream();
                 for (var j = 0; j < videoTracks.length; j++) {
                     videoStream.addTrack(videoTracks[j]);
@@ -390,33 +507,69 @@ function handleLocalStream(streams, resolution) {
             }
         }
 
-        if (streams && streams.desktopStream)
+        // FIXME Checking streams here is unnecessary because there's
+        // streams.audioVideo above.
+        if (streams)
             desktopStream = streams.desktopStream;
 
     }
     else if (RTCBrowserType.isFirefox() || RTCBrowserType.isTemasysPluginUsed()) {   // Firefox and Temasys plugin
-        if (streams && streams.audio)
+        if (streams) {
             audioStream = streams.audio;
-
-        if (streams && streams.video)
             videoStream = streams.video;
-
-        if(streams && streams.desktop)
             desktopStream = streams.desktop;
+        }
     }
 
     if (desktopStream)
-        res.push({stream: desktopStream,
-            type: "video", videoType: "desktop"});
+        res.push({
+            stream: desktopStream,
+            track: desktopStream.getVideoTracks()[0],
+            mediaType: MediaType.VIDEO,
+            videoType: VideoType.DESKTOP
+        });
 
     if(audioStream)
-        res.push({stream: audioStream, type: "audio", videoType: null});
+        res.push({
+            stream: audioStream,
+            track: audioStream.getAudioTracks()[0],
+            mediaType: MediaType.AUDIO,
+            videoType: null
+        });
 
     if(videoStream)
-        res.push({stream: videoStream, type: "video", videoType: "camera",
-            resolution: resolution});
+        res.push({
+            stream: videoStream,
+            track: videoStream.getVideoTracks()[0],
+            mediaType: MediaType.VIDEO,
+            videoType: VideoType.CAMERA,
+            resolution: resolution
+        });
 
     return res;
+}
+
+/**
+ * Wraps original attachMediaStream function to set current audio output device
+ * if this is supported.
+ * @param {Function} origAttachMediaStream
+ * @returns {Function}
+ */
+function wrapAttachMediaStream(origAttachMediaStream) {
+    return function(element, stream) {
+        var res = origAttachMediaStream.apply(RTCUtils, arguments);
+
+        if (RTCUtils.isDeviceChangeAvailable('output') &&
+            stream.getAudioTracks && stream.getAudioTracks().length) {
+            element.setSinkId(RTCUtils.getAudioOutputDevice())
+                .catch(function (ex) {
+                    logger.error('Failed to set audio output on element',
+                        element, ex);
+                });
+        }
+
+        return res;
+    }
 }
 
 //Options parameter is to pass config options. Currently uses only "useIPv6".
@@ -439,7 +592,7 @@ var RTCUtils = {
                     navigator.mediaDevices.enumerateDevices.bind(navigator.mediaDevices)
                 );
                 this.pc_constraints = {};
-                this.attachMediaStream = function (element, stream) {
+                this.attachMediaStream = wrapAttachMediaStream(function (element, stream) {
                     //  srcObject is being standardized and FF will eventually
                     //  support that unprefixed. FF also supports the
                     //  "element.src = URL.createObjectURL(...)" combo, but that
@@ -453,7 +606,7 @@ var RTCUtils = {
                     element.play();
 
                     return element;
-                };
+                });
                 this.getStreamID = function (stream) {
                     var id = stream.id;
                     if (!id) {
@@ -488,7 +641,7 @@ var RTCUtils = {
                     this.getUserMedia = getUserMedia;
                     this.enumerateDevices = enumerateDevicesThroughMediaStreamTrack;
                 }
-                this.attachMediaStream = function (element, stream) {
+                this.attachMediaStream = wrapAttachMediaStream(function (element, stream) {
 
                     // saves the created url for the stream, so we can reuse it
                     // and not keep creating urls
@@ -500,7 +653,7 @@ var RTCUtils = {
                     element.src = stream.jitsiObjectURL;
 
                     return element;
-                };
+                });
                 this.getStreamID = function (stream) {
                     // streams from FF endpoints have the characters '{' and '}'
                     // that make jQuery choke.
@@ -551,7 +704,7 @@ var RTCUtils = {
                     self.peerconnection = RTCPeerConnection;
                     self.getUserMedia = window.getUserMedia;
                     self.enumerateDevices = enumerateDevicesThroughMediaStreamTrack;
-                    self.attachMediaStream = function (element, stream) {
+                    self.attachMediaStream = wrapAttachMediaStream(function (element, stream) {
 
                         if (stream.id === "dummyAudio" || stream.id === "dummyVideo") {
                             return;
@@ -563,10 +716,9 @@ var RTCUtils = {
                         }
 
                         return attachMediaStream(element, stream);
-                    };
+                    });
                     self.getStreamID = function (stream) {
-                        var id = SDPUtil.filter_special_chars(stream.label);
-                        return id;
+                        return SDPUtil.filter_special_chars(stream.label);
                     };
                     self.getVideoSrc = function (element) {
                         if (!element) {
@@ -733,7 +885,7 @@ var RTCUtils = {
                                     new Error("Unable to get the audio and " +
                                         "video tracks."),
                                     options.devices));
-                                    return;
+                                return;
                             }
                             if(hasDesktop) {
                                 screenObtainer.obtainStream(
@@ -793,15 +945,22 @@ var RTCUtils = {
         return (MediaStreamTrack && MediaStreamTrack.getSources)? true : false;
     },
     /**
-     * Returns true if changing the camera / microphone device is supported and
-     * false if not.
+     * Returns true if changing the input (camera / microphone) or output
+     * (audio) device is supported and false if not.
+     * @params {string} [deviceType] - type of device to change. Default is
+     *      undefined or 'input', 'output' - for audio output device change.
+     * @returns {boolean} true if available, false otherwise.
      */
-    isDeviceChangeAvailable: function () {
-        return RTCBrowserType.isNWJS() || 
-	    RTCBrowserType.isChrome() ||
-            RTCBrowserType.isFirefox() ||
-            RTCBrowserType.isOpera() ||
-            RTCBrowserType.isTemasysPluginUsed();
+    isDeviceChangeAvailable: function (deviceType) {
+        return deviceType === 'output' || deviceType === 'audiooutput'
+            ? isAudioOutputDeviceChangeAvailable
+            : 
+		RTCBrowserType.isNWJS() ||
+		RTCBrowserType.isChrome() ||
+                RTCBrowserType.isFirefox() ||
+                RTCBrowserType.isOpera() ||
+                RTCBrowserType.isTemasysPluginUsed()||
+                RTCBrowserType.isNWJS();
     },
     /**
      * A method to handle stopping of the stream.
@@ -832,8 +991,39 @@ var RTCUtils = {
      */
     isDesktopSharingEnabled: function () {
         return screenObtainer.isSupported();
-    }
+    },
+    /**
+     * Sets current audio output device.
+     * @param {string} deviceId - id of 'audiooutput' device from
+     *      navigator.mediaDevices.enumerateDevices(), 'default' for default
+     *      device
+     * @returns {Promise} - resolves when audio output is changed, is rejected
+     *      otherwise
+     */
+    setAudioOutputDevice: function (deviceId) {
+        if (!this.isDeviceChangeAvailable('output')) {
+            Promise.reject(
+                new Error('Audio output device change is not supported'));
+        }
 
+        return featureDetectionAudioEl.setSinkId(deviceId)
+            .then(function() {
+                audioOutputDeviceId = deviceId;
+
+                logger.log('Audio output device set to ' + deviceId);
+
+                eventEmitter.emit(RTCEvents.AUDIO_OUTPUT_DEVICE_CHANGED,
+                    deviceId);
+            });
+    },
+    /**
+     * Returns currently used audio output device id, '' stands for default
+     * device
+     * @returns {string}
+     */
+    getAudioOutputDevice: function () {
+        return audioOutputDeviceId;
+    }
 };
 
 module.exports = RTCUtils;

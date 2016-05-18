@@ -14,7 +14,9 @@ var wrtcFuncNames = {
     setLocalDescription:  "setLocalDescription",
     setRemoteDescription: "setRemoteDescription",
     addIceCandidate:      "addIceCandidate",
-    getUserMedia:         "getUserMedia"
+    getUserMedia:         "getUserMedia",
+    iceConnectionFailure: "iceConnectionFailure",
+    signalingError:       "signalingError"
 };
 
 /**
@@ -22,7 +24,6 @@ var wrtcFuncNames = {
  * @see http://www.callstats.io/api/#enumeration-of-fabricevent
  */
 var fabricEvent = {
-    fabricSetupFailed:"fabricSetupFailed",
     fabricHold:"fabricHold",
     fabricResume:"fabricResume",
     audioMute:"audioMute",
@@ -31,7 +32,10 @@ var fabricEvent = {
     videoResume:"videoResume",
     fabricUsageEvent:"fabricUsageEvent",
     fabricStats:"fabricStats",
-    fabricTerminated:"fabricTerminated"
+    fabricTerminated:"fabricTerminated",
+    screenShareStart:"screenShareStart",
+    screenShareStop:"screenShareStop",
+    dominantSpeaker:"dominantSpeaker"
 };
 
 var callStats = null;
@@ -102,9 +106,9 @@ var CallStats = _try_catch(function(jingleSession, Settings, options) {
 
         this.userID = Settings.getCallStatsUserName();
 
-    //FIXME:  change it to something else (maybe roomName)
         var location = window.location;
-        this.confID = location.hostname + location.pathname;
+        // The confID is case sensitive!!!
+        this.confID = location.hostname + "/" + options.roomName;
 
         //userID is generated or given by the origin server
         callStats.initialize(options.callStatsID,
@@ -209,6 +213,26 @@ CallStats.sendMuteEvent = _try_catch(function (mute, type, cs) {
 });
 
 /**
+ * Notifies CallStats for screen sharing events
+ * @param start {boolean} true for starting screen sharing and
+ * false for not stopping
+ */
+CallStats.sendScreenSharingEvent = _try_catch(function (start, cs) {
+
+    CallStats._reportEvent.call(cs,
+        start? fabricEvent.screenShareStart : fabricEvent.screenShareStop);
+});
+
+/**
+ * Notifies CallStats that we are the new dominant speaker in the conference.
+ */
+CallStats.sendDominantSpeakerEvent = _try_catch(function (cs) {
+
+    CallStats._reportEvent.call(cs,
+        fabricEvent.dominantSpeaker);
+});
+
+/**
  * Reports an error to callstats.
  *
  * @param type the type of the error, which will be one of the wrtcFuncNames
@@ -239,14 +263,13 @@ CallStats.prototype.sendTerminateEvent = _try_catch(function () {
 });
 
 /**
- * Notifies CallStats for connection setup errors
+ * Notifies CallStats for ice connection failed
+ * @param {RTCPeerConnection} pc connection on which failure occured.
+ * @param {CallStats} cs callstats instance related to the error (optional)
  */
-CallStats.prototype.sendSetupFailedEvent = _try_catch(function () {
-    if(!callStats) {
-        return;
-    }
-    callStats.sendFabricEvent(this.peerconnection,
-        callStats.fabricEvent.fabricSetupFailed, this.confID);
+CallStats.prototype.sendIceConnectionFailedEvent = _try_catch(function (pc, cs){
+    CallStats._reportError.call(
+        cs, wrtcFuncNames.iceConnectionFailure, null, pc);
 });
 
 /**
@@ -353,6 +376,20 @@ CallStats.sendSetRemoteDescFailed = _try_catch(function (e, pc, cs) {
  */
 CallStats.sendAddIceCandidateFailed = _try_catch(function (e, pc, cs) {
     CallStats._reportError.call(cs, wrtcFuncNames.addIceCandidate, e, pc);
+});
+
+/**
+ * Notifies CallStats that there is an unhandled error on the page.
+ *
+ * @param {Error} e error to send
+ * @param {RTCPeerConnection} pc connection on which failure occured.
+ * @param {CallStats} cs callstats instance related to the error (optional)
+ */
+CallStats.sendUnhandledError = _try_catch(function (e, cs) {
+    // for now send the stack property of errors, which is has the form:
+    // name: message <newline> stack(multiline)
+    CallStats._reportError
+        .call(cs, wrtcFuncNames.signalingError, e, null);
 });
 
 module.exports = CallStats;

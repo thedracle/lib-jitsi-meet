@@ -47,6 +47,7 @@ The ```options``` parameter is JS object with the following properties:
     8. desktopSharingFirefoxExtensionURL - The URL to the Firefox extension for desktop sharing. "null" if no extension is required.
     9. disableAudioLevels - boolean property. Enables/disables audio levels.
     10. disableSimulcast - boolean property. Enables/disables simulcast.
+    11. enableWindowOnErrorHandler - boolean property (default false). Enables/disables attaching global onerror handler (window.onerror).
 
 * ```JitsiMeetJS.JitsiConnection``` - the ```JitsiConnection``` constructor. You can use that to create new server connection.
 
@@ -61,15 +62,29 @@ JitsiMeetJS.setLogLevel(JitsiMeetJS.logLevels.ERROR);
         2. resolution - the prefered resolution for the local video.
         3. cameraDeviceId - the deviceID for the video device that is going to be used
         4. micDeviceId - the deviceID for the audio device that is going to be used
+        5. minFps - the minimum frame rate for the video stream (passed to GUM)
+        6. maxFps - the maximum frame rate for the video stream (passed to GUM)
 
-* ```JitsiMeetJS.enumerateDevices(callback)``` - returns list of the available devices as a parameter to the callback function. Every device is a object with the following format:
-    - label - the name of the device
-    - kind - "audioinput" or "videoinput"
-    - deviceId - the id of the device.
-
-* ```JitsiMeetJS.isDeviceListAvailable()```- returns true if retrieving the device list is support and false - otherwise.
-
+* ```JitsiMeetJS.enumerateDevices(callback)``` - __DEPRECATED__. Use ```JitsiMeetJS.mediaDevices.enumerateDevices(callback)``` instead.
+* ```JitsiMeetJS.isDeviceListAvailable()``` - __DEPRECATED__. Use ```JitsiMeetJS.mediaDevices.isDeviceListAvailable()``` instead.
+* ```JitsiMeetJS.isDeviceChangeAvailable(deviceType)``` - __DEPRECATED__. Use ```JitsiMeetJS.mediaDevices.isDeviceChangeAvailable(deviceType)``` instead.
 * ```JitsiMeetJS.isDesktopSharingEnabled()``` - returns true if desktop sharing is supported and false otherwise. NOTE: that method can be used after ```JitsiMeetJS.init(options)``` is completed otherwise the result will be always null.
+* ```JitsiMeetJS.getGlobalOnErrorHandler()``` - returns function that can be used to be attached to window.onerror and if options.enableWindowOnErrorHandler is enabled returns the function used by the lib. (function(message, source, lineno, colno, error)).
+
+* ```JitsiMeetJS.mediaDevices``` - JS object that contains methods for interaction with media devices. Following methods are available:
+    - ```isDeviceListAvailable()``` - returns true if retrieving the device list is supported and false - otherwise
+    - ```isDeviceChangeAvailable(deviceType)``` - returns true if changing the input (camera / microphone) or output (audio) device is supported and false if not. ```deviceType``` is a type of device to change. Undefined or 'input' stands for input devices, 'output' - for audio output devices.
+    - ```enumerateDevices(callback)``` - returns list of the available devices as a parameter to the callback function. Every device is a MediaDeviceInfo object with the following properties:
+        - label - the name of the device
+        - kind - "audioinput", "videoinput" or "audiooutput"
+        - deviceId - the id of the device
+        - groupId - group identifier, two devices have the same group identifier if they belong to the same physical device; for example a monitor with both a built-in camera and microphone
+    - ```setAudioOutputDevice(deviceId)``` - sets current audio output device. ```deviceId``` - id of 'audiooutput' device from ```JitsiMeetJS.enumerateDevices()```, '' is for default device.
+    - ```getAudioOutputDevice()``` - returns currently used audio output device id, '' stands for default device.
+    - ```isDevicePermissionGranted(type)``` - returns true if user granted permission to media devices. ```type``` - 'audio', 'video' or ```undefined```. In case of ```undefined``` will check if both audio and video permissions were granted.
+    - ```addEventListener(event, handler)``` - attaches an event handler.
+    - ```removeEventListener(event, handler)``` - removes an event handler.
+
 
 * ```JitsiMeetJS.events``` - JS object that contains all events used by the API. You will need that JS object when you try to subscribe for connection or conference events.
     We have two event types - connection and conference. You can access the events with the following code ```JitsiMeetJS.events.<event_type>.<event_name>```.
@@ -110,6 +125,11 @@ JitsiMeetJS.setLogLevel(JitsiMeetJS.logLevels.ERROR);
     3. tracks
         - LOCAL_TRACK_STOPPED - indicates that a local track was stopped. This
         event can be fired when ```dispose()``` method is called or for other reasons.
+        - TRACK_AUDIO_OUTPUT_CHANGED - indicates that audio output device for track was changed (parameters - deviceId (string) - new audio output device ID).
+        
+    4. mediaDevices
+        - DEVICE_LIST_CHANGED - indicates that list of currently connected devices has changed (parameters - devices(MediaDeviceInfo[])).
+        
 
 * ```JitsiMeetJS.errors``` - JS object that contains all errors used by the API. You can use that object to check the reported errors from the API
     We have two error types - connection and conference. You can access the events with the following code ```JitsiMeetJS.errors.<error_type>.<error_name>```.
@@ -333,6 +353,12 @@ We have the following methods for controling the tracks:
 9. getParticipantId() - returns id(string) of the track owner
 
    Note: This method is implemented only for the remote tracks.
+   
+10. setAudioOutput(audioOutputDeviceId) - sets new audio output device for track's DOM elements. Video tracks are ignored.
+
+11. getDeviceId() - returns device ID associated with track (for local tracks only)
+
+12. isEnded() - returns true if track is ended
 
 
 Getting Started

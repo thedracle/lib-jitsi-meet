@@ -45,11 +45,17 @@ function JitsiConference(options) {
     this.statistics = new Statistics(this.xmpp, {
         callStatsID: this.options.config.callStatsID,
         callStatsSecret: this.options.config.callStatsSecret,
-        disableThirdPartyRequests: this.options.config.disableThirdPartyRequests
+        disableThirdPartyRequests:
+            this.options.config.disableThirdPartyRequests,
+        roomName: this.options.name
     });
     setupListeners(this);
+    var JitsiMeetJS = this.connection.JitsiMeetJS;
     JitsiMeetJS._gumFailedHandler.push(function(error) {
         this.statistics.sendGetUserMediaFailed(error);
+    }.bind(this));
+    JitsiMeetJS._globalOnErrorHandler.push(function(error) {
+        this.statistics.sendUnhandledError(error);
     }.bind(this));
     this.participants = {};
     this.lastDominantSpeaker = null;
@@ -84,31 +90,39 @@ JitsiConference.prototype.isJoined = function () {
 };
 
 /**
+ * Leaves the conference and calls onMemberLeft for every participant.
+ */
+JitsiConference.prototype._leaveRoomAndRemoveParticipants = function () {
+    // leave the conference
+    if (this.room) {
+        this.room.leave();
+    }
+
+    this.room = null;
+    // remove all participants
+    this.getParticipants().forEach(function (participant) {
+        this.onMemberLeft(participant.getJid());
+    }.bind(this));
+}
+/**
  * Leaves the conference.
  * @returns {Promise}
  */
 JitsiConference.prototype.leave = function () {
     var conference = this;
 
-    // leave the conference
-    if (conference.xmpp && conference.room) {
-        conference.xmpp.leaveRoom(conference.room.roomjid);
-    }
-
-    conference.room = null;
-
-    // remove local tracks
     return Promise.all(
         conference.getLocalTracks().map(function (track) {
             return conference.removeTrack(track);
         })
-    ).then(function () {
-
-        // remove all participants
-        conference.getParticipants().forEach(function (participant) {
-            conference.onMemberLeft(participant.getJid());
-        });
-    });
+    ).then(this._leaveRoomAndRemoveParticipants.bind(this))
+    .catch(function (error) {
+        logger.error(error);
+        // We are proceeding with leaving the conference because room.leave may
+        // succeed.
+        this._leaveRoomAndRemoveParticipants();
+        return Promise.resolve();
+    }.bind(this));
 };
 
 /**
@@ -171,7 +185,7 @@ JitsiConference.prototype.getExternalAuthUrl = function (urlForPopup) {
  */
 JitsiConference.prototype.getLocalTracks = function () {
     if (this.rtc) {
-        return this.rtc.localStreams;
+        return this.rtc.localTracks.slice();
     } else {
         return [];
     }
@@ -303,17 +317,9 @@ JitsiConference.prototype.addTrack = function (track) {
     {
         throw new Error(JitsiTrackErrors.TRACK_IS_DISPOSED);
     }
-    if (track.isVideoTrack()) {
-        if (this.rtc.getLocalVideoStream()) {
-            throw new Error("cannot add second video track to the conference");
-        }
-        this.removeCommand("videoType");
-        this.sendCommand("videoType", {
-            value: track.videoType,
-            attributes: {
-                xmlns: 'http://jitsi.org/jitmeet/video'
-            }
-        });
+
+    if (track.isVideoTrack() && this.rtc.getLocalVideoTrack()) {
+        throw new Error("cannot add second video track to the conference");
     }
 
     track.ssrcHandler = function (conference, ssrcMap) {
@@ -328,7 +334,16 @@ JitsiConference.prototype.addTrack = function (track) {
 
     return new Promise(function (resolve) {
         this.room.addStream(track.getOriginalStream(), function () {
-            this.rtc.addLocalStream(track);
+            if (track.isVideoTrack()) {
+                this.removeCommand("videoType");
+                this.sendCommand("videoType", {
+                    value: track.videoType,
+                    attributes: {
+                        xmlns: 'http://jitsi.org/jitmeet/video'
+                    }
+                });
+            }
+            this.rtc.addLocalTrack(track);
             if (track.startMuted) {
                 track.mute();
             }
@@ -348,6 +363,13 @@ JitsiConference.prototype.addTrack = function (track) {
                                    track.audioLevelHandler);
             //FIXME: This dependacy is not necessary. This is quick fix.
             track._setConference(this);
+
+            // send event for starting screen sharing
+            // FIXME: we assume we have only one screen sharing track
+            // if we change this we need to fix this check
+            if (track.isVideoTrack() && track.videoType === "desktop")
+                this.statistics.sendScreenSharingEvent(true);
+
             this.eventEmitter.emit(JitsiConferenceEvents.TRACK_ADDED, track);
             resolve(track);
         }.bind(this));
@@ -388,9 +410,10 @@ JitsiConference.prototype.removeTrack = function (track) {
     {
         throw new Error(JitsiTrackErrors.TRACK_IS_DISPOSED);
     }
+
     if(!this.room){
         if(this.rtc) {
-            this.rtc.removeLocalStream(track);
+            this.rtc.removeLocalTrack(track);
             this.eventEmitter.emit(JitsiConferenceEvents.TRACK_REMOVED, track);
         }
         return Promise.resolve();
@@ -400,13 +423,20 @@ JitsiConference.prototype.removeTrack = function (track) {
             track._setSSRC(null);
             //FIXME: This dependacy is not necessary. This is quick fix.
             track._setConference(this);
-            this.rtc.removeLocalStream(track);
+            this.rtc.removeLocalTrack(track);
             track.removeEventListener(JitsiTrackEvents.TRACK_MUTE_CHANGED,
                 track.muteHandler);
             track.removeEventListener(JitsiTrackEvents.TRACK_AUDIO_LEVEL_CHANGED,
                 track.audioLevelHandler);
             this.room.removeListener(XMPPEvents.SENDRECV_STREAMS_CHANGED,
                 track.ssrcHandler);
+
+            // send event for stopping screen sharing
+            // FIXME: we assume we have only one screen sharing track
+            // if we change this we need to fix this check
+            if (track.isVideoTrack() && track.videoType === "desktop")
+                this.statistics.sendScreenSharingEvent(false);
+
             this.eventEmitter.emit(JitsiConferenceEvents.TRACK_REMOVED, track);
             resolve();
         }.bind(this), {
@@ -525,22 +555,41 @@ JitsiConference.prototype.muteParticipant = function (id) {
     this.room.muteParticipant(participant.getJid(), true);
 };
 
-JitsiConference.prototype.onMemberJoined = function (jid, nick, role) {
+/**
+ * Indicates that a participant has joined the conference.
+ *
+ * @param jid the jid of the participant in the MUC
+ * @param nick the display name of the participant
+ * @param role the role of the participant in the MUC
+ * @param isHidden indicates if this is a hidden participant (sysem participant,
+ * for example a recorder).
+ */
+JitsiConference.prototype.onMemberJoined
+    = function (jid, nick, role, isHidden) {
     var id = Strophe.getResourceFromJid(jid);
     if (id === 'focus' || this.myUserId() === id) {
        return;
     }
-    var participant = new JitsiParticipant(jid, this, nick);
+    var participant = new JitsiParticipant(jid, this, nick, isHidden);
     participant._role = role;
     this.participants[id] = participant;
     this.eventEmitter.emit(JitsiConferenceEvents.USER_JOINED, id, participant);
-    this.xmpp.connection.disco.info(
-        jid, "node", function(iq) {
-            participant._supportsDTMF = $(iq).find(
-                '>query>feature[var="urn:xmpp:jingle:dtmf:0"]').length > 0;
-            this.updateDTMFSupport();
-        }.bind(this)
-    );
+    // XXX Since disco is checked in multiple places (e.g.
+    // modules/xmpp/strophe.jingle.js, modules/xmpp/strophe.rayo.js), check it
+    // here as well.
+    var disco = this.xmpp.connection.disco;
+    if (disco) {
+        disco.info(
+            jid, "node", function(iq) {
+                participant._supportsDTMF = $(iq).find(
+                    '>query>feature[var="urn:xmpp:jingle:dtmf:0"]').length > 0;
+                this.updateDTMFSupport();
+            }.bind(this)
+        );
+    } else {
+      // FIXME Should participant._supportsDTMF be assigned false here (and
+      // this.updateDTMFSupport invoked)?
+    }
 };
 
 JitsiConference.prototype.onMemberLeft = function (jid) {
@@ -551,7 +600,7 @@ JitsiConference.prototype.onMemberLeft = function (jid) {
     var participant = this.participants[id];
     delete this.participants[id];
 
-    this.rtc.removeRemoteStream(id);
+    this.rtc.removeRemoteTracks(id);
 
     this.eventEmitter.emit(JitsiConferenceEvents.USER_LEFT, id, participant);
 };
@@ -572,6 +621,10 @@ JitsiConference.prototype.onDisplayNameChanged = function (jid, displayName) {
     if (!participant) {
         return;
     }
+
+    if (participant._displayName === displayName)
+        return;
+
     participant._displayName = displayName;
     this.eventEmitter.emit(JitsiConferenceEvents.DISPLAY_NAME_CHANGED, id, displayName);
 };
@@ -671,18 +724,14 @@ JitsiConference.prototype.isRecordingSupported = function () {
  * and "off" if the recording is not started.
  */
 JitsiConference.prototype.getRecordingState = function () {
-    if(this.room)
-        return this.room.getRecordingState();
-    return "off";
+    return (this.room) ? this.room.getRecordingState() : undefined;
 }
 
 /**
  * Returns the url of the recorded video.
  */
 JitsiConference.prototype.getRecordingURL = function () {
-    if(this.room)
-        return this.room.getRecordingURL();
-    return null;
+    return (this.room) ? this.room.getRecordingURL() : null;
 }
 
 /**
@@ -692,10 +741,10 @@ JitsiConference.prototype.toggleRecording = function (options) {
     if(this.room)
         return this.room.toggleRecording(options, function (status, error) {
             this.eventEmitter.emit(
-                JitsiConferenceEvents.RECORDING_STATE_CHANGED, status, error);
+                JitsiConferenceEvents.RECORDER_STATE_CHANGED, status, error);
         }.bind(this));
     this.eventEmitter.emit(
-        JitsiConferenceEvents.RECORDING_STATE_CHANGED, "error",
+        JitsiConferenceEvents.RECORDER_STATE_CHANGED, "error",
         new Error("The conference is not created yet!"));
 }
 
@@ -823,6 +872,13 @@ JitsiConference.prototype.getLogs = function () {
 };
 
 /**
+ * Returns measured connectionTimes.
+ */
+JitsiConference.prototype.getConnectionTimes = function () {
+    return this.room.connectionTimes;
+};
+
+/**
  * Sends the given feedback through CallStats if enabled.
  *
  * @param overallFeedback an integer between 1 and 5 indicating the
@@ -851,11 +907,12 @@ JitsiConference.prototype.isCallstatsEnabled = function () {
  */
 function setupListeners(conference) {
     conference.xmpp.addListener(
-        XMPPEvents.CALL_INCOMING, function (jingleSession, jingleOffer) {
+        XMPPEvents.CALL_INCOMING, function (jingleSession, jingleOffer, now) {
 
         if (conference.room.isFocus(jingleSession.peerjid)) {
             // Accept incoming call
             conference.room.setJingleSession(jingleSession);
+            conference.room.connectionTimes["session.initiate"] = now;
             jingleSession.initialize(false /* initiator */, conference.room);
             conference.rtc.onIncommingCall(jingleSession);
             jingleSession.acceptOffer(jingleOffer, null,
@@ -874,30 +931,29 @@ function setupListeners(conference) {
         }
     });
 
-    conference.room.addListener(XMPPEvents.REMOTE_STREAM_RECEIVED,
-        function (data, sid, thessrc) {
-            var track = conference.rtc.createRemoteStream(data, sid, thessrc);
+    conference.room.addListener(XMPPEvents.REMOTE_TRACK_ADDED,
+        function (data) {
+            var track = conference.rtc.createRemoteTrack(data);
             if (track) {
                 conference.onTrackAdded(track);
             }
         }
     );
-    conference.room.addListener(XMPPEvents.REMOTE_STREAM_REMOVED,
-        function (streamId) {
-            var participants = conference.getParticipants();
-            for(var j = 0; j < participants.length; j++) {
-                var participant = participants[j];
+    conference.room.addListener(XMPPEvents.REMOTE_TRACK_REMOVED,
+        function (streamId, trackId) {
+            conference.getParticipants().forEach(function(participant) {
                 var tracks = participant.getTracks();
                 for(var i = 0; i < tracks.length; i++) {
-                    if(tracks[i] && tracks[i].stream &&
-                        RTC.getStreamID(tracks[i].stream) == streamId){
+                    if(tracks[i]
+                        && tracks[i].getStreamId() == streamId
+                        && tracks[i].getTrackId() == trackId) {
                         var track = participant._tracks.splice(i, 1)[0];
                         conference.eventEmitter.emit(
                             JitsiConferenceEvents.TRACK_REMOVED, track);
                         return;
                     }
                 }
-            }
+            });
         }
     );
     conference.rtc.addListener(RTCEvents.FAKE_VIDEO_TRACK_CREATED,
@@ -994,10 +1050,10 @@ function setupListeners(conference) {
         conference.eventEmitter.emit(JitsiConferenceEvents.CONNECTION_INTERRUPTED);
     });
 
-    conference.room.addListener(XMPPEvents.RECORDING_STATE_CHANGED,
-        function () {
+    conference.room.addListener(XMPPEvents.RECORDER_STATE_CHANGED,
+        function (state) {
             conference.eventEmitter.emit(
-                JitsiConferenceEvents.RECORDING_STATE_CHANGED);
+                JitsiConferenceEvents.RECORDER_STATE_CHANGED, state);
         });
 
     conference.room.addListener(XMPPEvents.PHONE_NUMBER_CHANGED, function () {
@@ -1038,6 +1094,16 @@ function setupListeners(conference) {
             conference.lastDominantSpeaker = id;
             conference.eventEmitter.emit(JitsiConferenceEvents.DOMINANT_SPEAKER_CHANGED, id);
         }
+        if (conference.statistics && conference.myUserId() === id) {
+            // We are the new dominant speaker.
+            conference.statistics.sendDominantSpeakerEvent();
+        }
+    });
+
+    conference.rtc.addListener(RTCEvents.DATA_CHANNEL_OPEN, function () {
+        var now = window.performance.now();
+        logger.log("(TIME) data channel opened ", now);
+        conference.room.connectionTimes["data.channel.opened"] = now;
     });
 
     conference.rtc.addListener(RTCEvents.LASTN_CHANGED, function (oldValue, newValue) {
@@ -1196,7 +1262,7 @@ function setupListeners(conference) {
             conference.eventEmitter.emit(
                 JitsiConferenceEvents.CONNECTION_STATS, stats);
         });
-        conference.xmpp.addListener(XMPPEvents.DISPOSE_CONFERENCE,
+        conference.room.addListener(XMPPEvents.DISPOSE_CONFERENCE,
             function () {
                 conference.statistics.dispose();
             });
@@ -1207,9 +1273,11 @@ function setupListeners(conference) {
                     session, conference.settings);
             });
 
-        conference.room.addListener(XMPPEvents.CONFERENCE_SETUP_FAILED,
-            function () {
-                conference.statistics.sendSetupFailedEvent();
+        conference.room.addListener(XMPPEvents.CONNECTION_ICE_FAILED,
+            function (pc) {
+                conference.statistics.sendIceConnectionFailedEvent(pc);
+                conference.room.eventEmitter.emit(
+                    XMPPEvents.CONFERENCE_SETUP_FAILED);
             });
 
         conference.rtc.addListener(RTCEvents.TRACK_ATTACHED,
