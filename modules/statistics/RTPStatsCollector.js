@@ -6,7 +6,7 @@ var RTCBrowserType = require("../RTC/RTCBrowserType");
 var StatisticsEvents = require("../../service/statistics/Events");
 
 /* Whether we support the browser we are running into for logging statistics */
-var browserSupported = RTCBrowserType.isChrome() ||
+var browserSupported = RTCBrowserType.isChrome() || RTCBrowserType.isNWJS() || 
         RTCBrowserType.isOpera() || RTCBrowserType.isFirefox();
 
 var keyMap = {};
@@ -63,7 +63,7 @@ function getStatValue(item, name) {
     if (!keyMap[browserType][name])
         throw "The property isn't supported!";
     var key = keyMap[browserType][name];
-    return (RTCBrowserType.isChrome() || RTCBrowserType.isOpera()) ?
+    return (RTCBrowserType.isChrome() || RTCBrowserType.isOpera() || RTCBrowserType.isNWJS()) ?
         item.stat(key) : item[key];
 }
 

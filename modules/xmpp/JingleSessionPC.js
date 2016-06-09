@@ -433,7 +433,7 @@ JingleSessionPC.prototype.setLocalDescription = function (sdp, success,
  * @private
  */
 JingleSessionPC._fixAnswerRFC4145Setup = function (offer, answer) {
-    if (!RTCBrowserType.isChrome()) {
+    if (!(RTCBrowserType.isChrome() || RTCBrowserType.isNWJS())) {
         // It looks like Firefox doesn't agree with the fix (at least in its
         // current implementation) because it effectively remains active even
         // after we tell it to become passive. Apart from Firefox which I tested
@@ -1211,7 +1211,7 @@ JingleSessionPC.prototype.remoteStreamAdded = function (stream) {
         return;
     }
     // Bind 'addtrack'/'removetrack' event handlers
-    if (RTCBrowserType.isChrome()) {
+    if (RTCBrowserType.isChrome() || RTCBrowserType.isNWJS()) {
         stream.onaddtrack = function (event) {
             self.remoteTrackAdded(event.target, event.track);
         };
