@@ -136,13 +136,12 @@ function getConstraints(um, options) {
                 {googEchoCancellation: true},
                 {googDAEchoCancellation: true},
                 {googAutoGainControl: true},
-                {googExperimentalAutoGainControl: true},
+                {googAutoGainControl2: true},
                 {googNoiseSupression: true},
                 {googHighpassFilter: true},
-                {googExperimentalNoiseSuppression: true},
-                {googExperimentalEchoCancellation: true},
-                {googExperimentalAutoGainControl: true},
-		{googAudioMirroring: false}
+                {googNoiseSuppression2: true},
+                {googEchoCancellation2: true},
+                {googAutoGainControl2: true}
             );
         } else {
             if (options.micDeviceId) {
