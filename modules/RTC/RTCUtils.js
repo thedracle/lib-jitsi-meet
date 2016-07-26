@@ -134,10 +134,12 @@ function getConstraints(um, options) {
             // if it is good enough for hangouts...
             constraints.audio.optional.push(
                 {googEchoCancellation: true},
+                {googDAEchoCancellation: true},
                 {googAutoGainControl: true},
+                {googAutoGainControl2: true},
                 {googNoiseSupression: true},
                 {googHighpassFilter: true},
-                {googNoisesuppression2: true},
+                {googNoiseSuppression2: true},
                 {googEchoCancellation2: true},
                 {googAutoGainControl2: true}
             );
