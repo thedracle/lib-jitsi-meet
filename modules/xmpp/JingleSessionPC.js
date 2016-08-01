@@ -407,19 +407,7 @@ JingleSessionPC.prototype.setLocalDescription = function (sdp, success,
                                                                failure) {
     var self = this;
     this.localSDP = new SDP(sdp.sdp);
-
-    // Limit overall bandwidth
-    if(this.room.options.bandwidthLimit) {
-	this.localSDP.raw = this.localSDP.raw.replace('a=rtpmap:100 VP8/90000', 
-		"a=rtpmap:100 VP8/90000\r\na=fmtp:100 x-google-max-bitrate=" + 
-		parseInt(this.room.options.bandwidthLimit));
-	this.localSDP.raw = this.localSDP.raw.replace('a=rtpmap:107 H264/90000', 
-		"a=rtpmap:107 H264/90000\r\na=fmtp:107 x-google-max-bitrate=" + 
-		parseInt(this.room.options.bandwidthLimit));
-    }
-
     sdp.sdp = this.localSDP.raw;
-
     this.peerconnection.setLocalDescription(sdp,
         function () {
             if (success)
