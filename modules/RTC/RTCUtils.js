@@ -675,11 +675,11 @@ var RTCUtils = {
                 };
                 // DTLS should now be enabled by default but..
                 this.pc_constraints = {'optional': [
-                    {'DtlsSrtpKeyAgreement': 'true'},
-		    {googCpuOveruseDetection: true}, 
-		    {googCpuOveruseEncodeUsage: true}, 
-		    {googCpuUnderuseThreshold: 55}, 
-		    {googCpuOveruseThreshold: 85}
+                    {'DtlsSrtpKeyAgreement': 'true'}, 
+		    {googCpuOveruseDetection: {exact: true}}, 
+		    {googCpuOveruseEncodeUsage: {exact: true}}, 
+		    {googCpuUnderuseThreshold: {exact: 55}}, 
+		    {googCpuOveruseThreshold: {exact: 85}}
                 ]};
                 if (options.useIPv6) {
                     // https://code.google.com/p/webrtc/issues/detail?id=2828
