@@ -680,7 +680,7 @@ var RTCUtils = {
 		        {googCpuOveruseDetection: {exact: true}}, 
 		        {googCpuOveruseEncodeUsage: {exact: true}}, 
 		        {googCpuUnderuseThreshold: {exact: 55}}, 
-		        {googCpuOveruseThreshold: {exact: 85}}
+		        {googCpuOveruseThreshold: {exact: 85}
 			]
 		    }
                 ]};
