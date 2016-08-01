@@ -341,15 +341,6 @@ JingleSessionPC.prototype.setOffer = function (jingleOfferIq, success, failure) 
 
     this.remoteSDP.fromJingle(jingleOfferIq);
     this.readSsrcInfo($(jingleOfferIq).find(">content"));
-
-
-    // Limit overall bandwidth
-    if(this.room.options.bandwidthLimit) {
-	this.remoteSDP.raw = this.remoteSDP.raw.replace('a=rtpmap:100 VP8/90000', 
-		"a=rtpmap:100 VP8/90000/r/na=fmtp:100 x-google-max-bitrate=" + 
-		parseInt(this.room.options.bandwidthLimit));
-    }
-
     var remotedesc
         = new RTCSessionDescription({type: 'offer', sdp: this.remoteSDP.raw});
 
