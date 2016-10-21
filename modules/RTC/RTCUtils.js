@@ -108,7 +108,7 @@ function getConstraints(um, options) {
 
         if (options.cameraDeviceId) {
             // new style of settings device id (FF only)
-            constraints.video.deviceId = options.cameraDeviceId;
+            //constraints.video.deviceId = options.cameraDeviceId;
             // old style
             constraints.video.optional.push({
                 sourceId: options.cameraDeviceId
@@ -123,7 +123,7 @@ function getConstraints(um, options) {
             constraints.audio = { mandatory: {}, optional: []};
             if (options.micDeviceId) {
                 // new style of settings device id (FF only)
-                constraints.audio.deviceId = options.micDeviceId;
+                //constraints.audio.deviceId = options.micDeviceId;
                 // old style
                 constraints.audio.optional.push({
                     sourceId: options.micDeviceId
