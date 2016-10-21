@@ -115,8 +115,6 @@ function getConstraints(um, options) {
             });
         }
 
-        constraints.video.optional.push({ googLeakyBucket: true });
-
         setResolutionConstraints(constraints, options.resolution);
     }
     if (um.indexOf('audio') >= 0) {
