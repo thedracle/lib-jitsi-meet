@@ -15,9 +15,9 @@ var PING_INTERVAL = 10000;
 var PING_TIMEOUT = 15000;
 
 /**
- * Will close the connection after 3 consecutive ping errors.
+ * Will close the connection after 60 consecutive ping errors.
  */
-var PING_THRESHOLD = 3;
+var PING_THRESHOLD = 60;
 
 /**
  * XEP-0199 ping plugin.
