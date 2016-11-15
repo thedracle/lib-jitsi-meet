@@ -19,7 +19,7 @@ function createConnection(bosh, token) {
         bosh += (bosh.indexOf('?') == -1 ? '?' : '&') + 'token=' + token;
     }
 
-    return new Strophe.Connection(bosh);
+    return new Strophe.Connection(bosh, {keepalive: true});
 };
 
 //!!!!!!!!!! FIXME: ...
