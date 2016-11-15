@@ -4442,6 +4442,7 @@ Strophe.Bosh.prototype = {
         this.sid = null;
         this.rid = Math.floor(Math.random() * 4294967295);
         window.sessionStorage.removeItem('strophe-bosh-session');
+
     },
 
     /** PrivateFunction: _emptyQueue
@@ -4663,6 +4664,7 @@ Strophe.Bosh.prototype = {
                               req.id + "." +
                               req.sends + " error " + reqStatus +
                               " happened");
+                /* Why not keep retrying?
                 if (reqStatus === 0 ||
                     (reqStatus >= 400 && reqStatus < 600) ||
                     reqStatus >= 12000) {
@@ -4671,7 +4673,7 @@ Strophe.Bosh.prototype = {
                         this._conn._changeConnectStatus(Strophe.Status.DISCONNECTING, null);
                         this._conn._doDisconnect();
                     }
-                }
+                }*/
             }
 
             if (!((reqStatus > 0 && reqStatus < 500) ||
