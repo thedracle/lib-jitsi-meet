@@ -4771,7 +4771,12 @@ Strophe.Bosh.prototype = {
                         }
                     }
                 }
-                req.xhr.send(req.data);
+                try {
+                    req.xhr.send(req.data);
+                }
+                catch(e) {
+                    console.error('Error sending XHR Request');
+                }
             };
 
             // Implement progressive backoff for reconnects --
