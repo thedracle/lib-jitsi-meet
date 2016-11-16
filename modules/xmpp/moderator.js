@@ -2,9 +2,9 @@
 
 var logger = require("jitsi-meet-logger").getLogger(__filename);
 var XMPPEvents = require("../../service/xmpp/XMPPEvents");
-
 var AuthenticationEvents
     = require("../../service/authentication/AuthenticationEvents");
+var GlobalOnErrorHandler = require("../util/GlobalOnErrorHandler");
 
 function createExpBackoffTimer(step) {
     var count = 1;
@@ -74,7 +74,7 @@ Moderator.prototype.isSipGatewayEnabled =  function () {
 Moderator.prototype.onMucMemberLeft =  function (jid) {
     logger.info("Someone left is it focus ? " + jid);
     var resource = Strophe.getResourceFromJid(jid);
-    if (resource === 'focus' && !this.xmppService.sessionTerminated) {
+    if (resource === 'focus') {
         logger.info(
             "Focus has left the room - leaving conference");
         this.eventEmitter.emit(XMPPEvents.FOCUS_LEFT);
@@ -123,14 +123,6 @@ Moderator.prototype.createConferenceIq =  function () {
 
     if (sessionId) {
         elem.attrs({ 'session-id': sessionId});
-    }
-    if (this.options.connection.hosts !== undefined
-        && this.options.connection.hosts.bridge !== undefined) {
-        elem.c(
-            'property', {
-                name: 'bridge',
-                value: this.options.connection.hosts.bridge
-            }).up();
     }
     if (this.options.connection.enforcedBridge !== undefined) {
         elem.c(
@@ -182,6 +174,18 @@ Moderator.prototype.createConferenceIq =  function () {
                 value: true
             }).up();
     //}
+    elem.c(
+        'property', {
+            name: 'enableLipSync',
+            value: false !== this.options.connection.enableLipSync
+        }).up();
+    if (this.options.conference.audioPacketDelay !== undefined) {
+        elem.c(
+            'property', {
+                name: 'audioPacketDelay',
+                value: this.options.conference.audioPacketDelay
+            }).up();
+    }
     if (this.options.conference.startBitrate) {
         elem.c(
             'property', {
@@ -230,6 +234,14 @@ Moderator.prototype.createConferenceIq =  function () {
             name: 'simulcastMode',
             value: 'rewriting'
         }).up();
+
+    if (this.options.conference.useRoomAsSharedDocumentName !== undefined) {
+        elem.c(
+            'property', {
+                name: 'useRoomAsSharedDocumentName',
+                value: this.options.conference.useRoomAsSharedDocumentName
+            }).up();
+    }
     elem.up();
     return elem;
 };
@@ -259,7 +271,7 @@ Moderator.prototype.parseConfigOptions =  function (resultIq) {
             '>conference>property' +
             '[name=\'externalAuth\'][value=\'true\']').length > 0;
 
-    console.info(
+    logger.info(
         'External authentication enabled: ' + this.externalAuthEnabled);
 
     if (!this.externalAuthEnabled) {
@@ -363,8 +375,16 @@ Moderator.prototype._allocateConferenceFocusError = function (error, callback) {
                 });
         return;
     }
+    if(this.retries >= this.maxRetries) {
+        self.eventEmitter.emit(
+                XMPPEvents.ALLOCATE_FOCUS_MAX_RETRIES_ERROR);
+        return;
+    }
+    this.retries++;
     var waitMs = self.getNextErrorTimeout();
-    logger.error("Focus error, retry after " + waitMs, error);
+    var errmsg = "Focus error, retry after "+ waitMs;
+    GlobalOnErrorHandler.callErrorHandler(new Error(errmsg));
+    logger.error(errmsg, error);
     // Show message
     var focusComponent = self.getFocusComponent();
     var retrySec = waitMs / 1000;
@@ -433,61 +453,60 @@ Moderator.prototype.authenticate = function () {
     });
 };
 
-Moderator.prototype.getLoginUrl =  function (urlCallback, failureCallback) {
+Moderator.prototype.getLoginUrl = function (urlCallback, failureCallback) {
+    this._getLoginUrl(/* popup */ false, urlCallback, failureCallback);
+};
+
+/**
+ *
+ * @param {boolean} popup false for {@link Moderator#getLoginUrl} or true for
+ * {@link Moderator#getPopupLoginUrl}
+ * @param urlCb
+ * @param failureCb
+ */
+Moderator.prototype._getLoginUrl = function (popup, urlCb, failureCb) {
     var iq = $iq({to: this.getFocusComponent(), type: 'get'});
-    iq.c('login-url', {
+    var attrs = {
         xmlns: 'http://jitsi.org/protocol/focus',
         room: this.roomName,
         'machine-uid': this.settings.getUserId()
-    });
+    };
+    var str = 'auth url'; // for logger
+    if (popup) {
+       attrs.popup = true;
+       str = 'POPUP ' + str;
+    }
+    iq.c('login-url', attrs);
+    /**
+     * Implements a failure callback which reports an error message and an error
+     * through (1) GlobalOnErrorHandler, (2) logger, and (3) failureCb.
+     *
+     * @param {string} errmsg the error messsage to report
+     * @param {*} error the error to report (in addition to errmsg)
+     */
+    function reportError(errmsg, err) {
+        GlobalOnErrorHandler.callErrorHandler(new Error(errmsg));
+        logger.error(errmsg, err);
+        failureCb(err);
+    }
     this.connection.sendIQ(
         iq,
         function (result) {
             var url = $(result).find('login-url').attr('url');
-            url = url = decodeURIComponent(url);
+            url = decodeURIComponent(url);
             if (url) {
-                logger.info("Got auth url: " + url);
-                urlCallback(url);
+                logger.info('Got ' + str + ': ' + url);
+                urlCb(url);
             } else {
-                logger.error(
-                    "Failed to get auth url from the focus", result);
-                failureCallback(result);
+                reportError('Failed to get ' + str + ' from the focus', result);
             }
         },
-        function (error) {
-            logger.error("Get auth url error", error);
-            failureCallback(error);
-        }
+        reportError.bind(undefined, 'Get ' + str + ' error')
     );
 };
 
 Moderator.prototype.getPopupLoginUrl = function (urlCallback, failureCallback) {
-    var iq = $iq({to: this.getFocusComponent(), type: 'get'});
-    iq.c('login-url', {
-        xmlns: 'http://jitsi.org/protocol/focus',
-        room: this.roomName,
-        'machine-uid': this.settings.getUserId(),
-        popup: true
-    });
-    this.connection.sendIQ(
-        iq,
-        function (result) {
-            var url = $(result).find('login-url').attr('url');
-            url = url = decodeURIComponent(url);
-            if (url) {
-                logger.info("Got POPUP auth url:  " + url);
-                urlCallback(url);
-            } else {
-                logger.error(
-                    "Failed to get POPUP auth url from the focus", result);
-               failureCallback(result);
-            }
-        },
-        function (error) {
-            logger.error('Get POPUP auth url error', error);
-            failureCallback(error);
-        }
-    );
+    this._getLoginUrl(/* popup */ true, urlCallback, failureCallback);
 };
 
 Moderator.prototype.logout =  function (callback) {
@@ -513,7 +532,9 @@ Moderator.prototype.logout =  function (callback) {
             callback(logoutUrl);
         }.bind(this),
         function (error) {
-            logger.error("Logout error", error);
+            var errmsg = "Logout error";
+            GlobalOnErrorHandler.callErrorHandler(new Error(errmsg));
+            logger.error(errmsg, error);
         }
     );
 };

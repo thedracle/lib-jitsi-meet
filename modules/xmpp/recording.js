@@ -1,9 +1,11 @@
-/* global $, $iq, config, connection, focusMucJid, messageHandler,
-   Toolbar, Util, Promise */
+/* global $, $iq */
+
+import { getLogger } from "jitsi-meet-logger";
+const logger = getLogger(__filename);
 var XMPPEvents = require("../../service/xmpp/XMPPEvents");
 var JitsiRecorderErrors = require("../../JitsiRecorderErrors");
+var GlobalOnErrorHandler = require("../util/GlobalOnErrorHandler");
 
-var logger = require("jitsi-meet-logger").getLogger(__filename);
 
 function Recording(type, eventEmitter, connection, focusMucJid, jirecon,
     roomjid) {
@@ -40,7 +42,10 @@ Recording.status = {
     OFF: "off",
     AVAILABLE: "available",
     UNAVAILABLE: "unavailable",
-    PENDING: "pending"
+    PENDING: "pending",
+    RETRYING: "retrying",
+    BUSY: "busy",
+    FAILED: "failed"
 };
 
 Recording.action = {
@@ -77,10 +82,11 @@ Recording.prototype.handleJibriPresence = function (jibri) {
     this.eventEmitter.emit(XMPPEvents.RECORDER_STATE_CHANGED, this.state);
 };
 
-Recording.prototype.setRecordingJibri = function (state, callback, errCallback,
-    options) {
+Recording.prototype.setRecordingJibri
+    = function (state, callback, errCallback, options) {
+
     if (state == this.state){
-        errCallback(new Error("Invalid state!"));
+        errCallback(JitsiRecorderErrors.INVALID_STATE);
     }
     options = options || {};
 
@@ -110,7 +116,7 @@ Recording.prototype.setRecordingJibri = function (state, callback, errCallback,
 };
 
 Recording.prototype.setRecordingJirecon =
-    function (state, callback, errCallback, options) {
+    function (state, callback, errCallback) {
 
     if (state == this.state){
         errCallback(new Error("Invalid state!"));
@@ -201,7 +207,9 @@ function (state, callback, errCallback, options) {
             this.setRecordingJibri(state, callback, errCallback, options);
             break;
         default:
-            logger.error("Unknown recording type!");
+            var errmsg = "Unknown recording type!";
+            GlobalOnErrorHandler.callErrorHandler(new Error(errmsg));
+            logger.error(errmsg);
             return;
     }
 };
@@ -215,9 +223,13 @@ Recording.prototype.toggleRecording = function (options, statusChangeHandler) {
     var oldState = this.state;
 
     // If the recorder is currently unavailable we throw an error.
-    if (oldState === Recording.status.UNAVAILABLE)
-        statusChangeHandler("error",
-            new Error(JitsiRecorderErrors.RECORDER_UNAVAILABLE));
+    if (oldState === Recording.status.UNAVAILABLE
+        || oldState === Recording.status.FAILED)
+        statusChangeHandler(Recording.status.FAILED,
+                            JitsiRecorderErrors.RECORDER_UNAVAILABLE);
+    else if (oldState === Recording.status.BUSY)
+        statusChangeHandler(Recording.status.BUSY,
+                            JitsiRecorderErrors.RECORDER_BUSY);
 
     // If we're about to turn ON the recording we need either a streamId or
     // an authentication token depending on the recording type. If we don't
@@ -226,8 +238,8 @@ Recording.prototype.toggleRecording = function (options, statusChangeHandler) {
         || oldState === Recording.status.AVAILABLE)
         && ((!options.token && this.type === Recording.types.COLIBRI) ||
         (!options.streamId && this.type === Recording.types.JIBRI))) {
-        statusChangeHandler("error",
-            new Error(JitsiRecorderErrors.NO_TOKEN));
+        statusChangeHandler(Recording.status.FAILED,
+                            JitsiRecorderErrors.NO_TOKEN);
         logger.error("No token passed!");
         return;
     }
@@ -249,7 +261,7 @@ Recording.prototype.toggleRecording = function (options, statusChangeHandler) {
                 statusChangeHandler(state);
             }
         }, function (error) {
-            statusChangeHandler("error", error);
+            statusChangeHandler(Recording.status.FAILED, error);
         }, options);
 };
 

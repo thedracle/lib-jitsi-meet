@@ -1,10 +1,13 @@
-/* global $ */
+/* global mozRTCPeerConnection, webkitRTCPeerConnection */
+
+import { getLogger } from "jitsi-meet-logger";
+const logger = getLogger(__filename);
 var RTC = require('../RTC/RTC');
-var logger = require("jitsi-meet-logger").getLogger(__filename);
 var RTCBrowserType = require("../RTC/RTCBrowserType.js");
 var XMPPEvents = require("../../service/xmpp/XMPPEvents");
 var transform = require('sdp-transform');
 var RandomUtil = require('../util/RandomUtil');
+var GlobalOnErrorHandler = require("../util/GlobalOnErrorHandler");
 
 var SIMULCAST_LAYERS = 3;
 
@@ -155,7 +158,7 @@ var dumpSDP = function(description) {
 TraceablePeerConnection.prototype.ssrcReplacement = function (desc) {
     if (typeof desc !== 'object' || desc === null ||
         typeof desc.sdp !== 'string') {
-        console.warn('An empty description was passed as an argument.');
+        logger.warn('An empty description was passed as an argument.');
         return desc;
     }
 
@@ -185,7 +188,7 @@ TraceablePeerConnection.prototype.ssrcReplacement = function (desc) {
             var ssrcOperation = SSRCs[0];
             switch(ssrcOperation.type) {
                 case "mute":
-                case "addMuted":
+                case "addMuted": {
                 //FIXME: If we want to support multiple streams we have to add
                 // recv-only ssrcs for the
                 // muted streams on every change until the stream is unmuted
@@ -193,14 +196,16 @@ TraceablePeerConnection.prototype.ssrcReplacement = function (desc) {
                 // in the SDP
                     if(!bLine.ssrcs)
                         bLine.ssrcs = [];
-                    var groups = ssrcOperation.ssrc.groups;
-                    var ssrc = null;
+                    const groups = ssrcOperation.ssrc.groups;
+                    let ssrc = null;
                     if(groups && groups.length) {
                         ssrc = groups[0].primarySSRC;
                     } else if(ssrcOperation.ssrc.ssrcs &&
                         ssrcOperation.ssrc.ssrcs.length) {
                         ssrc = ssrcOperation.ssrc.ssrcs[0];
                     } else {
+                        GlobalOnErrorHandler.callErrorHandler(
+                            new Error("SSRC replacement error!"));
                         logger.error("SSRC replacement error!");
                         break;
                     }
@@ -215,14 +220,15 @@ TraceablePeerConnection.prototype.ssrcReplacement = function (desc) {
                     // only 1 video stream that is muted.
                     this.recvOnlySSRCs[bLine.type] = ssrc;
                     break;
-                case "unmute":
+                }
+                case "unmute": {
                     if(!ssrcOperation.ssrc || !ssrcOperation.ssrc.ssrcs ||
                         !ssrcOperation.ssrc.ssrcs.length)
                         break;
                     var ssrcMap = {};
                     var ssrcLastIdx = ssrcOperation.ssrc.ssrcs.length - 1;
                     for(var i = 0; i < bLine.ssrcs.length; i++) {
-                        var ssrc = bLine.ssrcs[i];
+                        const ssrc = bLine.ssrcs[i];
                         if (ssrc.attribute !== 'msid' &&
                             ssrc.value !== ssrcOperation.msid) {
                             continue;
@@ -233,7 +239,7 @@ TraceablePeerConnection.prototype.ssrcReplacement = function (desc) {
                         if(ssrcLastIdx < 0)
                             break;
                     }
-                    var groups = ssrcOperation.ssrc.groups;
+                    const groups = ssrcOperation.ssrc.groups;
                     if (typeof bLine.ssrcGroups !== 'undefined' &&
                         Array.isArray(bLine.ssrcGroups) && groups &&
                         groups.length) {
@@ -274,8 +280,9 @@ TraceablePeerConnection.prototype.ssrcReplacement = function (desc) {
                     // Storing the unmuted SSRCs.
                     permSSRCs.push(ssrcOperation);
                     break;
+                }
                 default:
-                break;
+                    break;
             }
             SSRCs = this.replaceSSRCs[bLine.type].splice(0,1);
         }
@@ -284,7 +291,7 @@ TraceablePeerConnection.prototype.ssrcReplacement = function (desc) {
 
         if (!Array.isArray(bLine.ssrcs) || bLine.ssrcs.length === 0)
         {
-            var ssrc = this.recvOnlySSRCs[bLine.type]
+            const ssrc = this.recvOnlySSRCs[bLine.type]
                 = this.recvOnlySSRCs[bLine.type] ||
                     RandomUtil.randomInt(1, 0xffffffff);
             bLine.ssrcs = [{
@@ -308,7 +315,7 @@ TraceablePeerConnection.prototype.ssrcReplacement = function (desc) {
 function extractSSRCMap(desc) {
     if (typeof desc !== 'object' || desc === null ||
         typeof desc.sdp !== 'string') {
-        console.warn('An empty description was passed as an argument.');
+        logger.warn('An empty description was passed as an argument.');
         return desc;
     }
 
@@ -467,17 +474,10 @@ Object.keys(getters).forEach(function (prop) {
 
 TraceablePeerConnection.prototype.addStream = function (stream, ssrcInfo) {
     this.trace('addStream', stream? stream.id : "null");
-    try
-    {
-        if(stream)
-            this.peerconnection.addStream(stream);
-        if(ssrcInfo && this.replaceSSRCs[ssrcInfo.mtype])
-            this.replaceSSRCs[ssrcInfo.mtype].push(ssrcInfo);
-    }
-    catch (e)
-    {
-        logger.error(e);
-    }
+    if(stream)
+        this.peerconnection.addStream(stream);
+    if(ssrcInfo && this.replaceSSRCs[ssrcInfo.mtype])
+        this.replaceSSRCs[ssrcInfo.mtype].push(ssrcInfo);
 };
 
 TraceablePeerConnection.prototype.removeStream = function (stream, stopStreams,
@@ -486,28 +486,23 @@ ssrcInfo) {
     if(stopStreams) {
         RTC.stopMediaStream(stream);
     }
-
-    try {
-        // FF doesn't support this yet.
-        if (this.peerconnection.removeStream) {
-            this.peerconnection.removeStream(stream);
-            // Removing all cached ssrcs for the streams that are removed or
-            // muted.
-            if(ssrcInfo && this.replaceSSRCs[ssrcInfo.mtype]) {
-                for(i = 0; i < this.replaceSSRCs[ssrcInfo.mtype].length; i++) {
-                    var op = this.replaceSSRCs[ssrcInfo.mtype][i];
-                    if(op.type === "unmute" &&
-                        op.ssrc.ssrcs.join("_") ===
-                        ssrcInfo.ssrc.ssrcs.join("_")) {
-                        this.replaceSSRCs[ssrcInfo.mtype].splice(i, 1);
-                        break;
-                    }
+    // FF doesn't support this yet.
+    if (this.peerconnection.removeStream) {
+        this.peerconnection.removeStream(stream);
+        // Removing all cached ssrcs for the streams that are removed or
+        // muted.
+        if(ssrcInfo && this.replaceSSRCs[ssrcInfo.mtype]) {
+            for(var i = 0; i < this.replaceSSRCs[ssrcInfo.mtype].length; i++) {
+                var op = this.replaceSSRCs[ssrcInfo.mtype][i];
+                if(op.type === "unmute" &&
+                    op.ssrc.ssrcs.join("_") ===
+                    ssrcInfo.ssrc.ssrcs.join("_")) {
+                    this.replaceSSRCs[ssrcInfo.mtype].splice(i, 1);
+                    break;
                 }
-                this.replaceSSRCs[ssrcInfo.mtype].push(ssrcInfo);
             }
+            this.replaceSSRCs[ssrcInfo.mtype].push(ssrcInfo);
         }
-    } catch (e) {
-        logger.error(e);
     }
 };
 
@@ -593,32 +588,45 @@ TraceablePeerConnection.prototype.createAnswer
     this.trace('createAnswer', JSON.stringify(constraints, null, ' '));
     this.peerconnection.createAnswer(
         function (answer) {
-            self.trace('createAnswerOnSuccess::preTransform', dumpSDP(answer));
-            // if we're running on FF, transform to Plan A first.
-            if (RTCBrowserType.usesUnifiedPlan()) {
-                answer = self.interop.toPlanB(answer);
-                self.trace('createAnswerOnSuccess::postTransform (Plan B)',
-                    dumpSDP(answer));
+            try {
+                self.trace(
+                    'createAnswerOnSuccess::preTransform', dumpSDP(answer));
+                // if we're running on FF, transform to Plan A first.
+                if (RTCBrowserType.usesUnifiedPlan()) {
+                    answer = self.interop.toPlanB(answer);
+                    self.trace('createAnswerOnSuccess::postTransform (Plan B)',
+                        dumpSDP(answer));
+                }
+
+                if (!self.session.room.options.disableSimulcast
+                    && self.simulcast.isSupported()) {
+                    answer = self.simulcast.mungeLocalDescription(answer);
+                    self.trace(
+                        'createAnswerOnSuccess::postTransform (simulcast)',
+                        dumpSDP(answer));
+                }
+
+                if (!RTCBrowserType.isFirefox())
+                {
+                    answer = self.ssrcReplacement(answer);
+                    self.trace('createAnswerOnSuccess::mungeLocalVideoSSRC',
+                        dumpSDP(answer));
+                }
+
+                self.eventEmitter.emit(XMPPEvents.SENDRECV_STREAMS_CHANGED,
+                    extractSSRCMap(answer));
+
+                successCallback(answer);
+            } catch (e) {
+                // there can be error modifying the answer, for example
+                // for ssrcReplacement there was a track with ssrc that is null
+                // and if we do not catch the error no callback is called
+                // at all
+                self.trace('createAnswerOnError', e);
+                self.trace('createAnswerOnError', dumpSDP(answer));
+                logger.error('createAnswerOnError', e, dumpSDP(answer));
+                failureCallback(e);
             }
-
-            if (!self.session.room.options.disableSimulcast
-                && self.simulcast.isSupported()) {
-                answer = self.simulcast.mungeLocalDescription(answer);
-                self.trace('createAnswerOnSuccess::postTransform (simulcast)',
-                    dumpSDP(answer));
-            }
-
-            if (!RTCBrowserType.isFirefox())
-            {
-                answer = self.ssrcReplacement(answer);
-                self.trace('createAnswerOnSuccess::mungeLocalVideoSSRC',
-                    dumpSDP(answer));
-            }
-
-            self.eventEmitter.emit(XMPPEvents.SENDRECV_STREAMS_CHANGED,
-                extractSSRCMap(answer));
-
-            successCallback(answer);
         },
         function(err) {
             self.trace('createAnswerOnFailure', err);
@@ -631,6 +639,7 @@ TraceablePeerConnection.prototype.createAnswer
 };
 
 TraceablePeerConnection.prototype.addIceCandidate
+        // eslint-disable-next-line no-unused-vars
         = function (candidate, successCallback, failureCallback) {
     //var self = this;
     this.trace('addIceCandidate', JSON.stringify(candidate, null, ' '));
@@ -651,7 +660,9 @@ TraceablePeerConnection.prototype.addIceCandidate
 
 TraceablePeerConnection.prototype.getStats = function(callback, errback) {
     // TODO: Is this the correct way to handle Opera, Temasys?
-    if (RTCBrowserType.isFirefox() || RTCBrowserType.isTemasysPluginUsed()) {
+    if (RTCBrowserType.isFirefox()
+            || RTCBrowserType.isTemasysPluginUsed()
+            || RTCBrowserType.isReactNative()) {
         // ignore for now...
         if(!errback)
             errback = function () {};

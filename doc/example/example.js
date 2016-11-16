@@ -1,17 +1,17 @@
+/* global $, JitsiMeetJS */
+
 var options = {
     hosts: {
         domain: 'jitsi-meet.example.com',
         muc: 'conference.jitsi-meet.example.com', // FIXME: use XEP-0030
-        bridge: 'jitsi-videobridge.jitsi-meet.example.com', // FIXME: use XEP-0030
     },
     bosh: '//jitsi-meet.example.com/http-bind', // FIXME: use xep-0156 for that
     clientNode: 'http://jitsi.org/jitsimeet', // The name of client node advertised in XEP-0115 'c' stanza
-}
+};
 
 var confOptions = {
     openSctp: true
-}
-
+};
 
 var isJoined = false;
 
@@ -104,7 +104,7 @@ function onUserLeft(id) {
         return;
     var tracks = remoteTracks[id];
     for(var i = 0; i< tracks.length; i++)
-        tracks[i].detach($("#" + id + tracks[i].getType()))
+        tracks[i].detach($("#" + id + tracks[i].getType()));
 }
 
 /**
@@ -140,12 +140,14 @@ function onConnectionSuccess(){
             room.getPhonePin());
     });
     room.join();
-};
+}
 
 /**
  * This function is called when the connection fail.
  */
-function onConnectionFailed(){console.error("Connection Failed!")};
+function onConnectionFailed() {
+    console.error("Connection Failed!");
+}
 
 /**
  * This function is called when the connection fail.
@@ -170,8 +172,9 @@ function unload() {
     room.leave();
     connection.disconnect();
 }
+
 var isVideo = true;
-function switchVideo() {
+function switchVideo() { // eslint-disable-line no-unused-vars
     isVideo = !isVideo;
     if(localTracks[1]) {
         localTracks[1].dispose();
@@ -195,14 +198,12 @@ function switchVideo() {
         });
 }
 
-function changeAudioOutput(selected) {
+function changeAudioOutput(selected) { // eslint-disable-line no-unused-vars
     JitsiMeetJS.mediaDevices.setAudioOutputDevice(selected.value);
 }
 
 $(window).bind('beforeunload', unload);
 $(window).bind('unload', unload);
-
-
 
 // JitsiMeetJS.setLogLevel(JitsiMeetJS.logLevels.ERROR);
 var initOptions = {
@@ -230,7 +231,7 @@ var initOptions = {
     desktopSharingFirefoxMaxVersionExtRequired: -1,
     // The URL to the Firefox extension for desktop sharing.
     desktopSharingFirefoxExtensionURL: null
-}
+};
 JitsiMeetJS.init(initOptions).then(function(){
     connection = new JitsiMeetJS.JitsiConnection(null, null, options);
 
@@ -249,7 +250,6 @@ JitsiMeetJS.init(initOptions).then(function(){
     console.log(error);
 });
 
-
 if (JitsiMeetJS.mediaDevices.isDeviceChangeAvailable('output')) {
     JitsiMeetJS.mediaDevices.enumerateDevices(function(devices) {
         var audioOutputDevices = devices.filter(function(d) { return d.kind === 'audiooutput'; });
@@ -263,7 +263,7 @@ if (JitsiMeetJS.mediaDevices.isDeviceChangeAvailable('output')) {
 
             $('#audioOutputSelectWrapper').show();
         }
-    })
+    });
 }
 
 var connection = null;

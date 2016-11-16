@@ -3,7 +3,10 @@
  * have different implementations depending on the underlying interface used
  * (i.e. WebRTC and ORTC) and here we hold the code common to all of them.
  */
-var logger = require("jitsi-meet-logger").getLogger(__filename);
+import {getLogger} from "jitsi-meet-logger";
+const logger = getLogger(__filename);
+
+import * as JingleSessionState from "./JingleSessionState";
 
 function JingleSession(me, sid, peerjid, connection,
                        media_constraints, ice_config, service, eventEmitter) {
@@ -58,7 +61,10 @@ function JingleSession(me, sid, peerjid, connection,
     // The chat room instance associated with the session.
     this.room = null;
 
-    // Jingle session state - uninitialized until 'initialize' is called
+    /**
+     * Jingle session state - uninitialized until {@link initialize} is called
+     * @type {JingleSessionState}
+     */
     this.state = null;
 }
 
@@ -69,12 +75,14 @@ function JingleSession(me, sid, peerjid, connection,
  */
 JingleSession.prototype.initialize = function(isInitiator, room) {
     if (this.state !== null) {
-        logger.error('attempt to initiate on session ' + this.sid +
-        'in state ' + this.state);
-        return;
+        var errmsg
+            = 'attempt to initiate on session ' + this.sid + 'in state '
+                + this.state;
+        logger.error(errmsg);
+        throw new Error(errmsg);
     }
     this.room = room;
-    this.state = 'pending';
+    this.state = JingleSessionState.PENDING;
     this.initiator = isInitiator ? this.me : this.peerjid;
     this.responder = !isInitiator ? this.me : this.peerjid;
     this.doInitialize();
@@ -89,16 +97,15 @@ JingleSession.prototype.doInitialize = function() {};
  * Adds the ICE candidates found in the 'contents' array as remote candidates?
  * Note: currently only used on transport-info
  */
+// eslint-disable-next-line no-unused-vars
 JingleSession.prototype.addIceCandidates = function(contents) {};
 
 /**
- * Checks if this JingleSession is in 'active' state which means that the call
- * is in progress.
- * @returns {boolean} <tt>true</tt> if this JingleSession is in 'active' state
- *          or <tt>false</tt> otherwise.
+ * Returns current state of this <tt>JingleSession</tt> instance.
+ * @returns {JingleSessionState} the current state of this session instance.
  */
-JingleSession.prototype.active = function () {
-    return this.state === 'active';
+JingleSession.prototype.getState = function () {
+    return this.state;
 };
 
 /**
@@ -106,6 +113,7 @@ JingleSession.prototype.active = function () {
  *
  * @param contents an array of Jingle 'content' elements.
  */
+// eslint-disable-next-line no-unused-vars
 JingleSession.prototype.addSources = function(contents) {};
 
 /**
@@ -113,14 +121,20 @@ JingleSession.prototype.addSources = function(contents) {};
  *
  * @param contents an array of Jingle 'content' elements.
  */
+// eslint-disable-next-line no-unused-vars
 JingleSession.prototype.removeSources = function(contents) {};
 
 /**
  * Terminates this Jingle session by sending session-terminate
  * @param reason XMPP Jingle error condition
  * @param text some meaningful error message
+ * @param success a callback called once the 'session-terminate' packet has been
+ * acknowledged with RESULT.
+ * @param failure a callback called when either timeout occurs or ERROR response
+ * is received.
  */
-JingleSession.prototype.terminate = function(reason, text) {};
+// eslint-disable-next-line no-unused-vars
+JingleSession.prototype.terminate = function(reason, text, success, failure) {};
 
 /**
  * Handles an offer from the remote peer (prepares to accept a session).
@@ -130,6 +144,7 @@ JingleSession.prototype.terminate = function(reason, text) {};
  *        object with details(which is meant more to be printed to the logger
  *        than analysed in the code, as the error is unrecoverable anyway)
  */
+// eslint-disable-next-line no-unused-vars
 JingleSession.prototype.acceptOffer = function(jingle, success, failure) {};
 
 module.exports = JingleSession;

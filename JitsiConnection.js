@@ -1,28 +1,41 @@
 var JitsiConference = require("./JitsiConference");
-var XMPP = require("./modules/xmpp/xmpp");
+import * as JitsiConnectionEvents from "./JitsiConnectionEvents";
+import XMPP from "./modules/xmpp/xmpp";
+var Statistics = require("./modules/statistics/statistics");
 
 /**
  * Creates new connection object for the Jitsi Meet server side video conferencing service. Provides access to the
  * JitsiConference interface.
- * @param JitsiMeetJS the JitsiMeetJS instance which is initializing the new
- * JitsiConnection instance
  * @param appID identification for the provider of Jitsi Meet video conferencing services.
  * @param token the JWT token used to authenticate with the server(optional)
  * @param options Object with properties / settings related to connection with the server.
  * @constructor
  */
-function JitsiConnection(JitsiMeetJS, appID, token, options) {
-    /**
-     * The {JitsiMeetJS} instance which has initialized this {JitsiConnection}
-     * instance.
-     * @public
-     */
-    this.JitsiMeetJS = JitsiMeetJS;
+function JitsiConnection(appID, token, options) {
     this.appID = appID;
     this.token = token;
     this.options = options;
     this.xmpp = new XMPP(options, token);
     this.conferences = {};
+
+    this.addEventListener(JitsiConnectionEvents.CONNECTION_FAILED,
+        function (errType, msg) {
+            // sends analytics and callstats event
+            Statistics.sendEventToAll('connection.failed.' + errType,
+                {label: msg});
+        }.bind(this));
+
+    this.addEventListener(JitsiConnectionEvents.CONNECTION_DISCONNECTED,
+        function (msg) {
+            // we can see disconnects from normal tab closing of the browser
+            // and then there are no msgs, but we want to log only disconnects
+            // when there is real error
+            if(msg)
+                Statistics.analytics.sendEvent(
+                    'connection.disconnected.' + msg);
+            Statistics.sendLog(
+                JSON.stringify({id: "connection.disconnected", msg: msg}));
+        });
 }
 
 /**
@@ -35,7 +48,7 @@ JitsiConnection.prototype.connect = function (options) {
         options = {};
 
     this.xmpp.connect(options.id, options.password);
-}
+};
 
 /**
  * Attach to existing connection. Can be used for optimizations. For example:
@@ -46,7 +59,7 @@ JitsiConnection.prototype.connect = function (options) {
  */
 JitsiConnection.prototype.attach = function (options) {
     this.xmpp.attach(options);
-}
+};
 
 /**
  * Disconnect the client from the server.
@@ -59,7 +72,7 @@ JitsiConnection.prototype.disconnect = function () {
     var x = this.xmpp;
 
     x.disconnect.apply(x, arguments);
-}
+};
 
 /**
  * This method allows renewal of the tokens if they are expiring.
@@ -67,7 +80,7 @@ JitsiConnection.prototype.disconnect = function () {
  */
 JitsiConnection.prototype.setToken = function (token) {
     this.token = token;
-}
+};
 
 /**
  * Creates and joins new conference.
@@ -82,7 +95,7 @@ JitsiConnection.prototype.initJitsiConference = function (name, options) {
         = new JitsiConference({name: name, config: options, connection: this});
     this.conferences[name] = conference;
     return conference;
-}
+};
 
 /**
  * Subscribes the passed listener to the event.
@@ -91,7 +104,7 @@ JitsiConnection.prototype.initJitsiConference = function (name, options) {
  */
 JitsiConnection.prototype.addEventListener = function (event, listener) {
     this.xmpp.addListener(event, listener);
-}
+};
 
 /**
  * Unsubscribes the passed handler.
@@ -100,7 +113,7 @@ JitsiConnection.prototype.addEventListener = function (event, listener) {
  */
 JitsiConnection.prototype.removeEventListener = function (event, listener) {
     this.xmpp.removeListener(event, listener);
-}
+};
 
 /**
  * Returns measured connectionTimes.
