@@ -4724,13 +4724,13 @@ Strophe.Bosh.prototype = {
         var requestCompletedWithServerError = (req.xhr.readyState == 4 &&
                                                (reqStatus < 1 ||
                                                 reqStatus >= 500));
-        if (primaryTimeout || secondaryTimeout ||
+        if (primaryTimeout ||
             requestCompletedWithServerError) {
-            if (secondaryTimeout) {
+            /*if (secondaryTimeout) {
                 Strophe.error("Request " +
                               this._requests[i].id +
                               " timed out (secondary), restarting");
-            }
+            }*/
             req.abort = true;
             req.xhr.abort();
             // setting to null fails on IE6, so set to empty function
