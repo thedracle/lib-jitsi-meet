@@ -70,20 +70,12 @@ function JitsiTrack(rtc, stream, track, streamInactiveHandler, trackMediaType,
     this.type = trackMediaType;
     this.track = track;
     this.videoType = videoType;
-    this.disposed = false;
 
     if(stream) {
         if (RTCBrowserType.isFirefox()) {
             implementOnEndedHandling(this);
         }
         addMediaStreamInactiveHandler(stream, streamInactiveHandler);
-    }
-
-    this._onAudioOutputDeviceChanged = this.setAudioOutput.bind(this);
-
-    if (this.isAudioTrack()) {
-        RTCUtils.addListener(RTCEvents.AUDIO_OUTPUT_DEVICE_CHANGED,
-            this._onAudioOutputDeviceChanged);
     }
 }
 
@@ -225,20 +217,16 @@ JitsiTrack.prototype.detach = function (container) {
 
 /**
  * Dispose sending the media track. And removes it from the HTML.
+ * NOTE: Works for local tracks only.
  */
 JitsiTrack.prototype.dispose = function () {
-    RTCUtils.removeListener(RTCEvents.AUDIO_OUTPUT_DEVICE_CHANGED,
-        this._onAudioOutputDeviceChanged);
-
-    this.disposed = true;
 };
 
 /**
  * Returns true if this is a video track and the source of the video is a
  * screen capture as opposed to a camera.
  */
-JitsiTrack.prototype.isScreenSharing = function(){
-
+JitsiTrack.prototype.isScreenSharing = function() {
 };
 
 /**
@@ -268,7 +256,7 @@ JitsiTrack.prototype.getId = function () {
  * @returns {boolean} whether MediaStream is active.
  */
 JitsiTrack.prototype.isActive = function () {
-    if((typeof this.stream.active !== "undefined"))
+    if(typeof this.stream.active !== "undefined")
         return this.stream.active;
     else
         return true;
@@ -298,7 +286,6 @@ JitsiTrack.prototype.off = function (eventId, handler) {
 // Common aliases for event emitter
 JitsiTrack.prototype.addEventListener = JitsiTrack.prototype.on;
 JitsiTrack.prototype.removeEventListener = JitsiTrack.prototype.off;
-
 
 /**
  * Sets the audio level for the stream
@@ -347,10 +334,11 @@ JitsiTrack.prototype.setAudioOutput = function (audioOutputDeviceId) {
     return Promise.all(this.containers.map(function(element) {
         return element.setSinkId(audioOutputDeviceId)
             .catch(function (error) {
-                logger.error('Failed to change audio output device on element',
+                logger.warn(
+                    'Failed to change audio output device on element. Default' +
+                    ' or previously set audio output device will be used.',
                     element, error);
-
-                    throw error;
+                throw error;
             });
     }))
     .then(function () {

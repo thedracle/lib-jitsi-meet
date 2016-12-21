@@ -30,7 +30,6 @@ JitsiRemoteTrack.prototype.constructor = JitsiRemoteTrack;
  * @param value the muted status.
  */
 JitsiRemoteTrack.prototype.setMute = function (value) {
-
     if(this.muted === value)
         return;
 
@@ -67,7 +66,8 @@ JitsiRemoteTrack.prototype.isLocal = function () {
 };
 
 /**
- * Return false;
+ * Returns the synchronization source identifier (SSRC) of this remote track.
+ * @returns {string} the SSRC of this remote track
  */
 JitsiRemoteTrack.prototype.getSSRC = function () {
     return this.ssrc;
@@ -83,5 +83,7 @@ JitsiRemoteTrack.prototype._setVideoType = function (type) {
     this.videoType = type;
     this.eventEmitter.emit(JitsiTrackEvents.TRACK_VIDEOTYPE_CHANGED, type);
 };
+
+delete JitsiRemoteTrack.prototype.dispose;
 
 module.exports = JitsiRemoteTrack;

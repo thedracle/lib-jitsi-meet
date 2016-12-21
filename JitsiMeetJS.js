@@ -8,6 +8,8 @@ var JitsiConnectionErrors = require("./JitsiConnectionErrors");
 var JitsiConferenceErrors = require("./JitsiConferenceErrors");
 var JitsiTrackEvents = require("./JitsiTrackEvents");
 var JitsiTrackErrors = require("./JitsiTrackErrors");
+var JitsiTrackError = require("./JitsiTrackError");
+var JitsiRecorderErrors = require("./JitsiRecorderErrors");
 var Logger = require("jitsi-meet-logger");
 var MediaType = require("./service/RTC/MediaType");
 var RTC = require("./modules/RTC/RTC");
@@ -15,6 +17,7 @@ var RTCUIHelper = require("./modules/RTC/RTCUIHelper");
 var Statistics = require("./modules/statistics/statistics");
 var Resolutions = require("./service/RTC/Resolutions");
 var ScriptUtil = require("./modules/util/ScriptUtil");
+var GlobalOnErrorHandler = require("./modules/util/GlobalOnErrorHandler");
 
 function getLowerResolution(resolution) {
     if(!Resolutions[resolution])
@@ -48,6 +51,7 @@ var LibJitsiMeet = {
     errors: {
         conference: JitsiConferenceErrors,
         connection: JitsiConnectionErrors,
+        recorder: JitsiRecorderErrors,
         track: JitsiTrackErrors
     },
     logLevels: Logger.levels,
@@ -60,27 +64,8 @@ var LibJitsiMeet = {
         Statistics.audioLevelsEnabled = !options.disableAudioLevels;
 
         if (options.enableWindowOnErrorHandler) {
-            // if an old handler exists also fire its events
-            var oldOnErrorHandler = window.onerror;
-            window.onerror = function (message, source, lineno, colno, error) {
-
-                this.getGlobalOnErrorHandler(
-                    message, source, lineno, colno, error);
-
-                if (oldOnErrorHandler)
-                    oldOnErrorHandler(message, source, lineno, colno, error);
-            }.bind(this);
-
-            // if an old handler exists also fire its events
-            var oldOnUnhandledRejection = window.onunhandledrejection;
-            window.onunhandledrejection = function(event) {
-
-                this.getGlobalOnErrorHandler(
-                    null, null, null, null, event.reason);
-
-                if(oldOnUnhandledRejection)
-                    oldOnUnhandledRejection(event);
-            }.bind(this);
+            GlobalOnErrorHandler.addHandler(
+                this.getGlobalOnErrorHandler.bind(this));
         }
 
         return RTC.init(options || {});
@@ -132,18 +117,27 @@ var LibJitsiMeet = {
                 this._gumFailedHandler.forEach(function (handler) {
                     handler(error);
                 });
-                if(!this._gumFailedHandler.length)
+
+                if(!this._gumFailedHandler.length) {
                     Statistics.sendGetUserMediaFailed(error);
-                if(error === JitsiTrackErrors.UNSUPPORTED_RESOLUTION) {
-                    var oldResolution = options.resolution || '360';
-                    var newResolution = getLowerResolution(oldResolution);
-                    if(newResolution === null)
+                }
+
+                if(error.name === JitsiTrackErrors.UNSUPPORTED_RESOLUTION) {
+                    var oldResolution = options.resolution || '360',
+                        newResolution = getLowerResolution(oldResolution);
+
+                    if (newResolution === null) {
                         return Promise.reject(error);
+                    }
+
                     options.resolution = newResolution;
+
                     logger.debug("Retry createLocalTracks with resolution",
                                 newResolution);
+
                     return LibJitsiMeet.createLocalTracks(options);
                 }
+
                 return Promise.reject(error);
             }.bind(this));
     },
@@ -191,7 +185,7 @@ var LibJitsiMeet = {
      * (function(message, source, lineno, colno, error)).
      */
     getGlobalOnErrorHandler: function (message, source, lineno, colno, error) {
-        console.error(
+        logger.error(
             'UnhandledError: ' + message,
             'Script: ' + source,
             'Line: ' + lineno,
@@ -225,6 +219,10 @@ var LibJitsiMeet = {
 // why the decision is to provide LibJitsiMeet as a parameter of
 // JitsiConnection.
 LibJitsiMeet.JitsiConnection = JitsiConnection.bind(null, LibJitsiMeet);
+
+// expose JitsiTrackError this way to give library consumers to do checks like
+// if (error instanceof JitsiMeetJS.JitsiTrackError) { }
+LibJitsiMeet.JitsiTrackError = JitsiTrackError;
 
 //Setups the promise object.
 window.Promise = window.Promise || require("es6-promise").Promise;

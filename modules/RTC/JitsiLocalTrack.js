@@ -4,6 +4,7 @@ var JitsiTrack = require("./JitsiTrack");
 var RTCBrowserType = require("./RTCBrowserType");
 var JitsiTrackEvents = require('../../JitsiTrackEvents');
 var JitsiTrackErrors = require("../../JitsiTrackErrors");
+var JitsiTrackError = require("../../JitsiTrackError");
 var RTCEvents = require("../../service/RTC/RTCEvents");
 var RTCUtils = require("./RTCUtils");
 var VideoType = require('../../service/RTC/VideoType');
@@ -36,6 +37,7 @@ function JitsiLocalTrack(stream, track, mediaType, videoType, resolution,
     this.resolution = resolution;
     this.deviceId = deviceId;
     this.startMuted = false;
+    this.disposed = false;
     //FIXME: This dependacy is not necessary.
     this.conference = null;
     this.initialMSID = this.getMSID();
@@ -68,6 +70,16 @@ function JitsiLocalTrack(stream, track, mediaType, videoType, resolution,
         }
     };
 
+    // Subscribe each created local audio track to
+    // RTCEvents.AUDIO_OUTPUT_DEVICE_CHANGED event. This is different from
+    // handling this event for remote tracks (which are handled in RTC.js),
+    // because there might be local tracks not attached to a conference.
+    if (this.isAudioTrack() && RTCUtils.isDeviceChangeAvailable('output')) {
+        this._onAudioOutputDeviceChanged = this.setAudioOutput.bind(this);
+
+        RTCUtils.addListener(RTCEvents.AUDIO_OUTPUT_DEVICE_CHANGED,
+            this._onAudioOutputDeviceChanged);
+    }
 
     RTCUtils.addListener(RTCEvents.DEVICE_LIST_CHANGED,
         this._onDeviceListChanged);
@@ -130,7 +142,8 @@ function createMuteUnmutePromise(track, mute)
     return new Promise(function (resolve, reject) {
 
         if(this.inMuteOrUnmuteProgress) {
-            reject(new Error(JitsiTrackErrors.TRACK_MUTE_UNMUTE_IN_PROGRESS));
+            reject(new JitsiTrackError(
+                JitsiTrackErrors.TRACK_MUTE_UNMUTE_IN_PROGRESS));
             return;
         }
         this.inMuteOrUnmuteProgress = true;
@@ -190,15 +203,19 @@ JitsiLocalTrack.prototype._setMute = function (mute, resolve, reject) {
     } else {
         if (mute) {
             this.dontFireRemoveEvent = true;
-            this.rtc.room.removeStream(this.stream, function () {},
-                {mtype: this.type, type: "mute", ssrc: this.ssrc});
-            RTCUtils.stopMediaStream(this.stream);
-            setStreamToNull = true;
-            if(isAudio)
-                this.rtc.room.setAudioMute(mute, callbackFunction);
-            else
-                this.rtc.room.setVideoMute(mute, callbackFunction);
-            //FIXME: Maybe here we should set the SRC for the containers to something
+            this.rtc.room.removeStream(this.stream, function () {
+                    RTCUtils.stopMediaStream(this.stream);
+                    setStreamToNull = true;
+                    if(isAudio)
+                        this.rtc.room.setAudioMute(mute, callbackFunction);
+                    else
+                        this.rtc.room.setVideoMute(mute, callbackFunction);
+                    //FIXME: Maybe here we should set the SRC for the containers to something
+                }.bind(this),
+                function (error) {
+                    reject(error);
+                }, {mtype: this.type, type: "mute", ssrc: this.ssrc});
+
         } else {
             var self = this;
             // FIXME why are we doing all this audio type checks and
@@ -224,7 +241,7 @@ JitsiLocalTrack.prototype._setMute = function (mute, resolve, reject) {
                             // This is not good when video type changes after
                             // unmute, but let's not crash here
                             if (self.videoType != streamInfo.videoType) {
-                                logger.error(
+                                logger.warn(
                                     "Video type has changed after unmute!",
                                     self.videoType, streamInfo.videoType);
                                 self.videoType = streamInfo.videoType;
@@ -253,6 +270,8 @@ JitsiLocalTrack.prototype._setMute = function (mute, resolve, reject) {
                             else
                                 self.rtc.room.setVideoMute(
                                     mute, callbackFunction);
+                        }, function (error) {
+                            reject(error);
                         }, {
                             mtype: self.type,
                             type: "unmute",
@@ -282,10 +301,15 @@ JitsiLocalTrack.prototype.dispose = function () {
         this.detach();
     }
 
-    JitsiTrack.prototype.dispose.call(this);
+    this.disposed = true;
 
     RTCUtils.removeListener(RTCEvents.DEVICE_LIST_CHANGED,
         this._onDeviceListChanged);
+
+    if (this._onAudioOutputDeviceChanged) {
+        RTCUtils.removeListener(RTCEvents.AUDIO_OUTPUT_DEVICE_CHANGED,
+            this._onAudioOutputDeviceChanged);
+    }
 
     return promise;
 };
@@ -359,7 +383,8 @@ JitsiLocalTrack.prototype.getSSRC = function () {
 };
 
 /**
- * Return true;
+ * Returns <tt>true</tt>.
+ * @returns {boolean} <tt>true</tt>
  */
 JitsiLocalTrack.prototype.isLocal = function () {
     return true;

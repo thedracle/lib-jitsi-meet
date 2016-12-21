@@ -14,8 +14,10 @@ var SDPUtil = require("../xmpp/SDPUtil");
 var EventEmitter = require("events");
 var screenObtainer = require("./ScreenObtainer");
 var JitsiTrackErrors = require("../../JitsiTrackErrors");
+var JitsiTrackError = require("../../JitsiTrackError");
 var MediaType = require("../../service/RTC/MediaType");
 var VideoType = require("../../service/RTC/VideoType");
+var GlobalOnErrorHandler = require("../util/GlobalOnErrorHandler");
 
 var eventEmitter = new EventEmitter();
 
@@ -29,6 +31,10 @@ var devices = {
 // Currently audio output device change is supported only in Chrome and
 // default output always has 'default' device ID
 var audioOutputDeviceId = 'default'; // default device
+// Disables Acoustic Echo Cancellation
+var disableAEC = false;
+// Disables Noise Suppression
+var disableNS = false;
 
 var featureDetectionAudioEl = document.createElement('audio');
 var isAudioOutputDeviceChangeAvailable =
@@ -118,7 +124,11 @@ function getConstraints(um, options) {
         setResolutionConstraints(constraints, options.resolution);
     }
     if (um.indexOf('audio') >= 0) {
-        if (!RTCBrowserType.isFirefox()) {
+        if (RTCBrowserType.isReactNative()) {
+            // The react-native-webrtc project that we're currently using
+            // expects the audio constraint to be a boolean.
+            constraints.audio = true;
+        } else if (!RTCBrowserType.isFirefox()) {
             // same behaviour as true
             constraints.audio = { mandatory: {}, optional: []};
             if (options.micDeviceId) {
@@ -131,14 +141,12 @@ function getConstraints(um, options) {
             }
             // if it is good enough for hangouts...
             constraints.audio.optional.push(
-                {googEchoCancellation: true},
-//              {googDAEchoCancellation: true},
+                {googEchoCancellation: !disableAEC},
                 {googAutoGainControl: true},
-                {googAutoGainControl2: true},
-                {googNoiseSupression: true},
+                {googNoiseSupression: !disableNS},
                 {googHighpassFilter: true},
-                {googNoiseSuppression2: true},
-                {googEchoCancellation2: true},
+                {googNoiseSuppression2: !disableNS},
+                {googEchoCancellation2: !disableAEC},
                 {googAutoGainControl2: true}
             );
         } else {
@@ -181,9 +189,11 @@ function getConstraints(um, options) {
             };
 
         } else {
-            logger.error(
-                "'screen' WebRTC media source is supported only in Chrome" +
-                " and with Temasys plugin");
+            var errmsg
+                = "'screen' WebRTC media source is supported only in Chrome"
+                    + " and with Temasys plugin";
+            GlobalOnErrorHandler.callErrorHandler(new Error(errmsg));
+            logger.error(errmsg);
         }
     }
     if (um.indexOf('desktop') >= 0) {
@@ -411,10 +421,8 @@ function wrapEnumerateDevices(enumerateDevices) {
     return function (callback) {
         // enumerate devices only after initial getUserMedia
         afterUserMediaInitialized(function () {
-
             enumerateDevices().then(callback, function (err) {
-                console.error('cannot enumerate devices: ', err);
-
+                logger.error('cannot enumerate devices: ', err);
                 callback([]);
             });
         });
@@ -472,7 +480,8 @@ function obtainDevices(options) {
             });
             logger.error(
                 "failed to obtain " + device + " stream - stop", error);
-            options.errorCallback(JitsiTrackErrors.parseError(error, devices));
+
+            options.errorCallback(error);
         });
 }
 
@@ -485,9 +494,17 @@ function obtainDevices(options) {
  */
 function handleLocalStream(streams, resolution) {
     var audioStream, videoStream, desktopStream, res = [];
-    // If this is FF, the stream parameter is *not* a MediaStream object, it's
-    // an object with two properties: audioStream, videoStream.
-    if (window.webkitMediaStream) {
+
+    // XXX The function obtainAudioAndVideoPermissions has examined the type of
+    // the browser, its capabilities, etc. and has taken the decision whether to
+    // invoke getUserMedia per device (e.g. Firefox) or once for both audio and
+    // video (e.g. Chrome). In order to not duplicate the logic here, examine
+    // the specified streams and figure out what we've received based on
+    // obtainAudioAndVideoPermissions' decision.
+    if (streams) {
+        // As mentioned above, certian types of browser (e.g. Chrome) support
+        // (with a result which meets our requirements expressed bellow) calling
+        // getUserMedia once for both audio and video.
         var audioVideo = streams.audioVideo;
         if (audioVideo) {
             var audioTracks = audioVideo.getAudioTracks();
@@ -505,39 +522,34 @@ function handleLocalStream(streams, resolution) {
                     videoStream.addTrack(videoTracks[j]);
                 }
             }
+        } else {
+          // On other types of browser (e.g. Firefox) we choose (namely,
+          // obtainAudioAndVideoPermissions) to call getUsermedia per device
+          // (type).
+          audioStream = streams.audio;
+          videoStream = streams.video;
         }
-
-        // FIXME Checking streams here is unnecessary because there's
-        // streams.audioVideo above.
-        if (streams)
-            desktopStream = streams.desktopStream;
-
-    }
-    else if (RTCBrowserType.isFirefox() || RTCBrowserType.isTemasysPluginUsed()) {   // Firefox and Temasys plugin
-        if (streams) {
-            audioStream = streams.audio;
-            videoStream = streams.video;
-            desktopStream = streams.desktop;
-        }
+        // Again, different choices on different types of browser.
+        desktopStream = streams.desktopStream || streams.desktop;
     }
 
-    if (desktopStream)
+    if (desktopStream) {
         res.push({
             stream: desktopStream,
             track: desktopStream.getVideoTracks()[0],
             mediaType: MediaType.VIDEO,
             videoType: VideoType.DESKTOP
         });
-
-    if(audioStream)
+    }
+    if (audioStream) {
         res.push({
             stream: audioStream,
             track: audioStream.getAudioTracks()[0],
             mediaType: MediaType.AUDIO,
             videoType: null
         });
-
-    if(videoStream)
+    }
+    if (videoStream) {
         res.push({
             stream: videoStream,
             track: videoStream.getVideoTracks()[0],
@@ -545,6 +557,7 @@ function handleLocalStream(streams, resolution) {
             videoType: VideoType.CAMERA,
             resolution: resolution
         });
+    }
 
     return res;
 }
@@ -563,7 +576,11 @@ function wrapAttachMediaStream(origAttachMediaStream) {
             stream.getAudioTracks && stream.getAudioTracks().length) {
             element.setSinkId(RTCUtils.getAudioOutputDevice())
                 .catch(function (ex) {
-                    logger.error('Failed to set audio output on element',
+                    GlobalOnErrorHandler.callUnhandledRejectionHandler(
+                        {promise: this, reason: ex});
+                    logger.warn('Failed to set audio output device for the ' +
+                        'element. Default audio output device will be used ' +
+                        'instead',
                         element, ex);
                 });
         }
@@ -575,6 +592,16 @@ function wrapAttachMediaStream(origAttachMediaStream) {
 //Options parameter is to pass config options. Currently uses only "useIPv6".
 var RTCUtils = {
     init: function (options) {
+
+        if (typeof(options.disableAEC) === "boolean") {
+            disableAEC = options.disableAEC;
+            logger.info("Disable AEC: " + disableAEC);
+        }
+        if (typeof(options.disableNS) === "boolean") {
+            disableNS = options.disableNS;
+            logger.info("Disable NS: " + disableNS);
+        }
+        
         return new Promise(function(resolve, reject) {
             if (RTCBrowserType.isFirefox()) {
                 var FFversion = RTCBrowserType.getFirefoxVersion();
@@ -629,7 +656,10 @@ var RTCUtils = {
                 };
                 RTCSessionDescription = mozRTCSessionDescription;
                 RTCIceCandidate = mozRTCIceCandidate;
-            } else if (RTCBrowserType.isChrome() || RTCBrowserType.isOpera() || RTCBrowserType.isNWJS()) {
+            } else if (RTCBrowserType.isChrome() ||
+                    RTCBrowserType.isOpera() ||
+                    RTCBrowserType.isNWJS() ||
+                    RTCBrowserType.isReactNative()) {
                 this.peerconnection = webkitRTCPeerConnection;
                 var getUserMedia = navigator.webkitGetUserMedia.bind(navigator);
                 if (navigator.mediaDevices) {
@@ -655,21 +685,27 @@ var RTCUtils = {
                     return element;
                 });
                 this.getStreamID = function (stream) {
-                    // streams from FF endpoints have the characters '{' and '}'
-                    // that make jQuery choke.
-                    return SDPUtil.filter_special_chars(stream.id);
+                    // A. MediaStreams from FF endpoints have the characters '{'
+                    // and '}' that make jQuery choke.
+                    // B. The react-native-webrtc implementation that we use on
+                    // React Native at the time of this writing returns a number
+                    // for the id of MediaStream. Let's just say that a number
+                    // contains no special characters.
+                    var id = stream.id;
+                    // XXX The return statement is affected by automatic
+                    // semicolon insertion (ASI). No line terminator is allowed
+                    // between the return keyword and the expression.
+                    return (
+                        (typeof id === 'number')
+                            ? id
+                            : SDPUtil.filter_special_chars(id));
                 };
                 this.getVideoSrc = function (element) {
-                    if (!element)
-                        return null;
-                    return element.getAttribute("src");
+                    return element ? element.getAttribute("src") : null;
                 };
                 this.setVideoSrc = function (element, src) {
-                    if (!src) {
-                        src = '';
-                    }
                     if (element)
-                        element.setAttribute("src", src);
+                        element.setAttribute("src", src || '');
                 };
                 // DTLS should now be enabled by default but..
                 this.pc_constraints = {'optional': [
@@ -752,11 +788,12 @@ var RTCUtils = {
                     resolve();
                 });
             } else {
+                var errmsg = 'Browser does not appear to be WebRTC-capable';
                 try {
-                    logger.error('Browser does not appear to be WebRTC-capable');
+                    logger.error(errmsg);
                 } catch (e) {
                 }
-                reject('Browser does not appear to be WebRTC-capable');
+                reject(new Error(errmsg));
                 return;
             }
 
@@ -797,14 +834,17 @@ var RTCUtils = {
                     setAvailableDevices(um, false);
                     logger.warn('Failed to get access to local media. Error ',
                         error, constraints);
+
                     if (failure_callback) {
-                        failure_callback(error, resolution);
+                        failure_callback(
+                            new JitsiTrackError(error, constraints, um));
                     }
                 });
         } catch (e) {
             logger.error('GUM failed: ', e);
+
             if (failure_callback) {
-                failure_callback(e);
+                failure_callback(new JitsiTrackError(e, constraints, um));
             }
         }
     },
@@ -835,8 +875,15 @@ var RTCUtils = {
                 && options.devices.indexOf("desktop") !== -1){
                 reject(new Error("Desktop sharing is not supported!"));
             }
-            if (RTCBrowserType.isFirefox() ||
-                RTCBrowserType.isTemasysPluginUsed()) {
+            if (RTCBrowserType.isFirefox()
+                    // XXX The react-native-webrtc implementation that we
+                    // utilize on React Native at the time of this writing does
+                    // not support the MediaStream constructors defined by
+                    // https://www.w3.org/TR/mediacapture-streams/#constructors
+                    // and instead has a single constructor which expects (an
+                    // NSNumber as) a MediaStream ID.
+                    || RTCBrowserType.isReactNative()
+                    || RTCBrowserType.isTemasysPluginUsed()) {
                 var GUM = function (device, s, e) {
                     this.getUserMediaWithConstraints(device, s, e, options);
                 };
@@ -875,16 +922,36 @@ var RTCUtils = {
                     this.getUserMediaWithConstraints(
                         options.devices,
                         function (stream) {
-                            if((options.devices.indexOf("audio") !== -1 &&
-                                !stream.getAudioTracks().length) ||
-                                (options.devices.indexOf("video") !== -1 &&
-                                !stream.getVideoTracks().length))
+                            var audioDeviceRequested = options.devices.indexOf("audio") !== -1;
+                            var videoDeviceRequested = options.devices.indexOf("video") !== -1;
+                            var audioTracksReceived = !!stream.getAudioTracks().length;
+                            var videoTracksReceived = !!stream.getVideoTracks().length;
+
+                            if((audioDeviceRequested && !audioTracksReceived) ||
+                                (videoDeviceRequested && !videoTracksReceived))
                             {
                                 self.stopMediaStream(stream);
-                                reject(JitsiTrackErrors.parseError(
-                                    new Error("Unable to get the audio and " +
-                                        "video tracks."),
-                                    options.devices));
+
+                                // We are getting here in case if we requested
+                                // 'audio' or 'video' devices or both, but
+                                // didn't get corresponding MediaStreamTrack in
+                                // response stream. We don't know the reason why
+                                // this happened, so reject with general error.
+                                var devices = [];
+
+                                if (audioDeviceRequested && !audioTracksReceived) {
+                                    devices.push("audio");
+                                }
+
+                                if (videoDeviceRequested && !videoTracksReceived) {
+                                    devices.push("video");
+                                }
+
+                                reject(new JitsiTrackError(
+                                    { name: "UnknownError" },
+                                    getConstraints(options.devices, options),
+                                    devices)
+                                );
                                 return;
                             }
                             if(hasDesktop) {
@@ -894,17 +961,15 @@ var RTCUtils = {
                                             desktopStream: desktopStream});
                                     }, function (error) {
                                         self.stopMediaStream(stream);
-                                        reject(
-                                            JitsiTrackErrors.parseError(error,
-                                                options.devices));
+
+                                        reject(error);
                                     });
                             } else {
                                 successCallback({audioVideo: stream});
                             }
                         },
                         function (error) {
-                            reject(JitsiTrackErrors.parseError(error,
-                                options.devices));
+                            reject(error);
                         },
                         options);
                 } else if (hasDesktop) {
@@ -912,9 +977,7 @@ var RTCUtils = {
                         function (stream) {
                             successCallback({desktopStream: stream});
                         }, function (error) {
-                            reject(
-                                JitsiTrackErrors.parseError(error,
-                                    ["desktop"]));
+                            reject(error);
                         });
                 }
             }
