@@ -189,7 +189,7 @@ JitsiLocalTrack.prototype._setMute = function (mute, resolve, reject) {
         resolve();
     }.bind(this);
 
-    if ((window.location.protocol != "https:") ||
+    if ((window.location.protocol != "https:" && window.location.protocol != "chrome-extension:") ||
         (isAudio) || this.videoType === VideoType.DESKTOP ||
         // FIXME FF does not support 'removeStream' method used to mute
         RTCBrowserType.isFirefox()) {
